@@ -54,9 +54,7 @@ export const login = async (req: Request, res: Response) => {
       ruolo: user.ruolo
     };
 
-    const token = jwt.sign(payload, jwtConfig.secret, {
-      expiresIn: jwtConfig.expiresIn
-    });
+    const token = jwt.sign(payload, jwtConfig.secret, { expiresIn: jwtConfig.expiresIn } as any);
 
     res.json({
       success: true,
