@@ -20,8 +20,8 @@ NC='\033[0m' # No Color
 REPO_BE="https://github.com/BomberStealth/OmniaPi_HomeDomotic_BE.git"
 REPO_FE="https://github.com/BomberStealth/OmniaPi_HomeDomotic_FE.git"
 
-# Directory di installazione
-INSTALL_DIR="/home/pi/omniapi-home"
+# Directory di installazione (usa home dell'utente corrente)
+INSTALL_DIR="$HOME/omniapi-home"
 BE_DIR="$INSTALL_DIR/backend"
 FE_DIR="$INSTALL_DIR/frontend"
 
