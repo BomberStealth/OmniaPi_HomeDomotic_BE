@@ -16,6 +16,11 @@ declare global {
   }
 }
 
+// Export tipo AuthRequest per i controller
+export interface AuthRequest extends Request {
+  user?: JWTPayload;
+}
+
 // Verifica token JWT
 export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
   try {

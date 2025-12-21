@@ -4,6 +4,9 @@ import app from './app';
 import { testConnection } from './config/database';
 import { connectMQTT } from './config/mqtt';
 import { initializeSocket } from './socket';
+import { loadAllSchedules } from './services/sceneScheduler';
+import { checkConditionalScenes } from './services/conditionsEngine';
+import logger from './config/logger';
 
 dotenv.config();
 
@@ -20,6 +23,16 @@ const startServer = async () => {
 
     // Connetti MQTT
     connectMQTT();
+
+    // Carica scene schedulate
+    logger.info('Caricamento scene schedulate...');
+    await loadAllSchedules();
+
+    // Avvia controllo condizioni ogni minuto
+    logger.info('Avvio controllo scene condizionali...');
+    setInterval(() => {
+      checkConditionalScenes();
+    }, 60000); // Ogni 60 secondi
 
     // Crea HTTP server
     const httpServer = http.createServer(app);

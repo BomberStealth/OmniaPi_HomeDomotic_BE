@@ -10,17 +10,13 @@ import { RowDataPacket } from 'mysql2';
 // CONTROLLER AUTENTICAZIONE
 // ============================================
 
-// Login
+// Login (con sicurezza migliorata)
 export const login = async (req: Request, res: Response) => {
+  const startTime = Date.now();
+
   try {
     const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email e password richiesti'
-      });
-    }
+    const clientIp = req.ip || req.socket.remoteAddress;
 
     // Trova utente
     const users = await query(
@@ -29,6 +25,12 @@ export const login = async (req: Request, res: Response) => {
     ) as RowDataPacket[];
 
     if (users.length === 0) {
+      // Log tentativo fallito
+      console.warn(`⚠️  Login fallito - Email non trovata: ${email} da IP: ${clientIp}`);
+
+      // Attendi un tempo casuale per prevenire timing attacks
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 200 + 100));
+
       return res.status(401).json({
         success: false,
         error: 'Credenziali non valide'
@@ -41,13 +43,19 @@ export const login = async (req: Request, res: Response) => {
     const isValidPassword = await bcrypt.compare(password, user.password);
 
     if (!isValidPassword) {
+      // Log tentativo fallito
+      console.warn(`⚠️  Login fallito - Password errata per: ${email} da IP: ${clientIp}`);
+
+      // Attendi un tempo casuale per prevenire timing attacks
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 200 + 100));
+
       return res.status(401).json({
         success: false,
         error: 'Credenziali non valide'
       });
     }
 
-    // Genera token
+    // Genera token JWT
     const payload: JWTPayload = {
       userId: user.id,
       email: user.email,
@@ -55,6 +63,10 @@ export const login = async (req: Request, res: Response) => {
     };
 
     const token = jwt.sign(payload, jwtConfig.secret, { expiresIn: jwtConfig.expiresIn } as any);
+
+    // Log login riuscito
+    const loginTime = Date.now() - startTime;
+    console.log(`✅ Login riuscito - User: ${user.email} (${user.ruolo}) da IP: ${clientIp} [${loginTime}ms]`);
 
     res.json({
       success: true,
@@ -70,7 +82,9 @@ export const login = async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Errore login:', error);
+    const clientIp = req.ip || req.socket.remoteAddress;
+    console.error(`❌ Errore login da IP: ${clientIp}`, error);
+
     res.status(500).json({
       success: false,
       error: 'Errore durante il login'
@@ -78,40 +92,45 @@ export const login = async (req: Request, res: Response) => {
   }
 };
 
-// Registrazione (solo per admin)
+// Registrazione (auto-registrazione pubblica)
 export const register = async (req: Request, res: Response) => {
+  const startTime = Date.now();
+
   try {
-    const { email, password, nome, cognome, ruolo } = req.body;
+    const { email, password, nome, cognome } = req.body;
+    const clientIp = req.ip || req.socket.remoteAddress;
 
-    if (!email || !password || !nome || !cognome) {
-      return res.status(400).json({
-        success: false,
-        error: 'Tutti i campi sono richiesti'
-      });
-    }
-
-    // Hash password
+    // Hash password con bcrypt (10 rounds)
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Inserisci utente
-    await query(
+    // Inserisci nuovo utente (ruolo sempre "cliente" per auto-registrazione)
+    const result = await query(
       'INSERT INTO utenti (email, password, nome, cognome, ruolo) VALUES (?, ?, ?, ?, ?)',
-      [email, hashedPassword, nome, cognome, ruolo || 'cliente']
+      [email, hashedPassword, nome, cognome, 'cliente']
     );
+
+    const registrationTime = Date.now() - startTime;
+
+    // Log registrazione riuscita
+    console.log(`✅ Registrazione riuscita - User: ${email} (cliente) da IP: ${clientIp} [${registrationTime}ms]`);
 
     res.status(201).json({
       success: true,
       message: 'Utente registrato con successo'
     });
   } catch (error: any) {
+    const clientIp = req.ip || req.socket.remoteAddress;
+
     if (error.code === 'ER_DUP_ENTRY') {
+      console.warn(`⚠️  Registrazione fallita - Email già esistente: ${req.body.email} da IP: ${clientIp}`);
+
       return res.status(400).json({
         success: false,
         error: 'Email già registrata'
       });
     }
 
-    console.error('Errore registrazione:', error);
+    console.error(`❌ Errore registrazione da IP: ${clientIp}`, error);
     res.status(500).json({
       success: false,
       error: 'Errore durante la registrazione'

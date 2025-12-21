@@ -18,10 +18,10 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting
+// Rate limiting - SVILUPPO: Estremamente permissivo
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minuti
-  max: 100 // max 100 richieste per IP
+  max: 100000 // Praticamente illimitato per sviluppo
 });
 app.use('/api/', limiter);
 

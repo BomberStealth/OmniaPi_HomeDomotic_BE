@@ -59,21 +59,29 @@ const migrations = [
     INDEX idx_piano (piano_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
-  // Tabella dispositivi
+  // Tabella dispositivi (Tasmota)
   `CREATE TABLE IF NOT EXISTS dispositivi (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    stanza_id INT NOT NULL,
-    tipo ENUM('luce', 'tapparella', 'termostato') NOT NULL,
+    impianto_id INT NOT NULL,
+    stanza_id INT,
+    tipo ENUM('luce', 'tapparella', 'termostato', 'generico') NOT NULL DEFAULT 'generico',
     nome VARCHAR(100) NOT NULL,
     topic_mqtt VARCHAR(255) NOT NULL,
+    ip_address VARCHAR(45),
+    mac_address VARCHAR(17) UNIQUE,
     stato ENUM('online', 'offline', 'errore') DEFAULT 'offline',
     configurazione JSON,
+    tasmota_info JSON,
+    bloccato BOOLEAN DEFAULT FALSE,
     creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     aggiornato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (stanza_id) REFERENCES stanze(id) ON DELETE CASCADE,
+    FOREIGN KEY (impianto_id) REFERENCES impianti(id) ON DELETE CASCADE,
+    FOREIGN KEY (stanza_id) REFERENCES stanze(id) ON DELETE SET NULL,
+    INDEX idx_impianto (impianto_id),
     INDEX idx_stanza (stanza_id),
     INDEX idx_tipo (tipo),
-    INDEX idx_topic (topic_mqtt)
+    INDEX idx_topic (topic_mqtt),
+    INDEX idx_mac (mac_address)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
   // Tabella scene
@@ -83,9 +91,26 @@ const migrations = [
     nome VARCHAR(100) NOT NULL,
     icona VARCHAR(50),
     azioni JSON NOT NULL,
+    is_base BOOLEAN DEFAULT FALSE,
     creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    aggiornato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (impianto_id) REFERENCES impianti(id) ON DELETE CASCADE,
-    INDEX idx_impianto (impianto_id)
+    INDEX idx_impianto (impianto_id),
+    INDEX idx_base (is_base)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // Tabella permessi utenti
+  `CREATE TABLE IF NOT EXISTS permessi_utenti (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    utente_id INT NOT NULL,
+    permesso VARCHAR(100) NOT NULL,
+    valore BOOLEAN DEFAULT FALSE,
+    creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    aggiornato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (utente_id) REFERENCES utenti(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_user_permission (utente_id, permesso),
+    INDEX idx_utente (utente_id),
+    INDEX idx_permesso (permesso)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
   // Tabella notifiche
@@ -125,6 +150,30 @@ export const runMigrations = async () => {
     `, [hashedPassword]);
 
     console.log('✅ Utente admin creato (email: admin@omniapi.com, password: admin123)');
+
+    // Crea scene base per ogni impianto esistente
+    const [impianti]: any = await connection.query('SELECT id FROM impianti');
+
+    const sceneBase = [
+      { nome: 'Giorno', icona: '☀️', azioni: JSON.stringify([]) },
+      { nome: 'Notte', icona: '🌙', azioni: JSON.stringify([]) },
+      { nome: 'Entra', icona: '🚪', azioni: JSON.stringify([]) },
+      { nome: 'Esci', icona: '👋', azioni: JSON.stringify([]) }
+    ];
+
+    for (const impianto of impianti) {
+      for (const scena of sceneBase) {
+        await connection.query(`
+          INSERT IGNORE INTO scene (impianto_id, nome, icona, azioni, is_base)
+          SELECT ?, ?, ?, ?, TRUE
+          WHERE NOT EXISTS (
+            SELECT 1 FROM scene WHERE impianto_id = ? AND nome = ? AND is_base = TRUE
+          )
+        `, [impianto.id, scena.nome, scena.icona, scena.azioni, impianto.id, scena.nome]);
+      }
+    }
+
+    console.log('✅ Scene base create per tutti gli impianti');
 
   } catch (error) {
     console.error('❌ Errore durante le migrazioni:', error);

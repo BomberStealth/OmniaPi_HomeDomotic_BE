@@ -37,8 +37,24 @@ export interface Impianto {
   cap: string;
   cliente_id: number;
   installatore_id: number;
+  utente_id?: number;
+  email_proprietario?: string;
+  codice_condivisione: string;
+  ha_fotovoltaico: boolean;
+  fotovoltaico_potenza?: number;
+  latitudine?: number;
+  longitudine?: number;
   creato_il: Date;
   aggiornato_il: Date;
+}
+
+export interface ImpiantoCondiviso {
+  id: number;
+  impianto_id: number;
+  utente_id: number;
+  email_utente: string;
+  ruolo_condivisione: 'visualizzatore' | 'controllore' | 'amministratore';
+  condiviso_il: Date;
 }
 
 export interface Piano {
