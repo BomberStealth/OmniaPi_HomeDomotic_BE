@@ -62,7 +62,8 @@
       "Bash(timeout 3 mosquitto_sub:*)",
       "Bash(python3:*)",
       "Bash(__NEW_LINE__ echo \"\")",
-      "Bash(pm2 list:*)"
+      "Bash(pm2 list:*)",
+      "Bash(git fetch:*)"
     ]
   }
 }
