@@ -12,30 +12,29 @@ export const getStanze = async (req: AuthRequest, res: Response) => {
     const { impiantoId } = req.params;
 
     // Verifica che l'utente abbia accesso all'impianto
-    const [impianti]: any = await query(
+    const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
        WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
-    if (impianti.length === 0) {
+    if (!impianti || impianti.length === 0) {
       return res.status(404).json({ error: 'Impianto non trovato' });
     }
 
     // Ottieni stanze con conteggio dispositivi
-    const [stanze]: any = await query(
-      `SELECT s.*, COUNT(d.id) as dispositivi_count
+    const stanze: any = await query(
+      `SELECT s.*,
+        (SELECT COUNT(*) FROM dispositivi d WHERE d.stanza_id = s.id) as dispositivi_count
        FROM stanze s
-       LEFT JOIN dispositivi d ON s.id = d.stanza_id
        WHERE s.impianto_id = ?
-       GROUP BY s.id
        ORDER BY s.ordine ASC, s.creato_il ASC`,
       [impiantoId]
     );
 
-    // Assicurati che sia sempre un array
-    const stanzeArray = Array.isArray(stanze) ? stanze : [stanze];
+    // Assicurati che sia sempre un array valido
+    const stanzeArray = Array.isArray(stanze) ? stanze.filter((s: any) => s !== null && s !== undefined) : [];
     res.json(stanzeArray);
   } catch (error) {
     console.error('Errore get stanze:', error);
@@ -54,31 +53,33 @@ export const createStanza = async (req: AuthRequest, res: Response) => {
     }
 
     // Verifica che l'utente abbia accesso all'impianto
-    const [impianti]: any = await query(
+    const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
        WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
-    if (impianti.length === 0) {
+    if (!impianti || impianti.length === 0) {
       return res.status(404).json({ error: 'Impianto non trovato' });
     }
 
     // Ottieni l'ordine massimo corrente
-    const [maxOrdine]: any = await query(
+    const maxOrdineResult: any = await query(
       'SELECT MAX(ordine) as max_ordine FROM stanze WHERE impianto_id = ?',
       [impiantoId]
     );
 
-    const nuovoOrdine = (maxOrdine && maxOrdine[0] && maxOrdine[0].max_ordine) ? maxOrdine[0].max_ordine + 1 : 1;
+    const nuovoOrdine = (maxOrdineResult && maxOrdineResult[0] && maxOrdineResult[0].max_ordine)
+      ? maxOrdineResult[0].max_ordine + 1
+      : 1;
 
     const result: any = await query(
       'INSERT INTO stanze (impianto_id, piano_id, nome, icona, ordine) VALUES (?, NULL, ?, ?, ?)',
       [impiantoId, nome, icona || '🚪', nuovoOrdine]
     );
 
-    const [stanza]: any = await query('SELECT * FROM stanze WHERE id = ?', [result.insertId]);
+    const stanza: any = await query('SELECT * FROM stanze WHERE id = ?', [result.insertId]);
 
     res.status(201).json(stanza[0]);
   } catch (error) {
@@ -94,7 +95,7 @@ export const updateStanza = async (req: AuthRequest, res: Response) => {
     const { nome, icona } = req.body;
 
     // Verifica che la stanza esista e che l'utente abbia accesso
-    const [stanze]: any = await query(
+    const stanze: any = await query(
       `SELECT s.* FROM stanze s
        JOIN impianti i ON s.impianto_id = i.id
        LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
@@ -102,7 +103,7 @@ export const updateStanza = async (req: AuthRequest, res: Response) => {
       [id, req.user!.userId, req.user!.userId]
     );
 
-    if (stanze.length === 0) {
+    if (!stanze || stanze.length === 0) {
       return res.status(404).json({ error: 'Stanza non trovata' });
     }
 
@@ -111,7 +112,7 @@ export const updateStanza = async (req: AuthRequest, res: Response) => {
       [nome || stanze[0].nome, icona || stanze[0].icona, id]
     );
 
-    const [stanzaAggiornata]: any = await query('SELECT * FROM stanze WHERE id = ?', [id]);
+    const stanzaAggiornata: any = await query('SELECT * FROM stanze WHERE id = ?', [id]);
 
     res.json(stanzaAggiornata[0]);
   } catch (error) {
@@ -126,7 +127,7 @@ export const deleteStanza = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
 
     // Verifica che la stanza esista e che l'utente abbia accesso
-    const [stanze]: any = await query(
+    const stanze: any = await query(
       `SELECT s.* FROM stanze s
        JOIN impianti i ON s.impianto_id = i.id
        LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
@@ -134,7 +135,7 @@ export const deleteStanza = async (req: AuthRequest, res: Response) => {
       [id, req.user!.userId, req.user!.userId]
     );
 
-    if (stanze.length === 0) {
+    if (!stanze || stanze.length === 0) {
       return res.status(404).json({ error: 'Stanza non trovata' });
     }
 

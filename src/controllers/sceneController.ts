@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
-import { reloadSchedule } from '../services/sceneScheduler';
+import { reloadSchedule, getScheduleStats } from '../services/sceneScheduler';
+import { canControlDeviceByTopic } from '../services/deviceGuard';
+import { getSunTimesForImpianto, getUpcomingSunTimes, formatTime } from '../services/sunCalculator';
 
 // ============================================
 // SCENE CONTROLLER
@@ -165,6 +167,37 @@ export const deleteScena = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// PUT toggle shortcut
+export const toggleShortcut = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { is_shortcut } = req.body;
+
+    // Verifica che la scena esista e che l'utente abbia accesso
+    const scene: any = await query(
+      `SELECT s.* FROM scene s
+       JOIN impianti i ON s.impianto_id = i.id
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE s.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [id, req.user!.userId, req.user!.userId]
+    );
+
+    if (scene.length === 0) {
+      return res.status(404).json({ error: 'Scena non trovata' });
+    }
+
+    await query(
+      'UPDATE scene SET is_shortcut = ? WHERE id = ?',
+      [is_shortcut, id]
+    );
+
+    res.json({ success: true, is_shortcut });
+  } catch (error) {
+    console.error('Errore toggle shortcut:', error);
+    res.status(500).json({ error: 'Errore durante l\'aggiornamento' });
+  }
+};
+
 // POST esegui scena
 export const executeScena = async (req: AuthRequest, res: Response) => {
   try {
@@ -184,20 +217,166 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
     }
 
     const scena = scene[0];
-    const azioni = JSON.parse(scena.azioni);
 
-    // Esegui le azioni della scena (invio comandi MQTT)
-    const mqtt = require('../config/mqtt');
-
-    for (const azione of azioni) {
-      const topic = `${azione.topic}/cmnd/POWER`;
-      const payload = azione.stato === 'ON' ? 'ON' : 'OFF';
-      mqtt.client.publish(topic, payload);
+    // Handle azioni - could be string, object, null, or empty
+    let azioni = [];
+    try {
+      if (typeof scena.azioni === 'string' && scena.azioni.trim()) {
+        azioni = JSON.parse(scena.azioni);
+      } else if (Array.isArray(scena.azioni)) {
+        azioni = scena.azioni;
+      }
+    } catch (e) {
+      console.error('Errore parsing azioni:', e);
+      azioni = [];
     }
 
-    res.json({ message: 'Scena eseguita con successo', azioni: azioni.length });
+    if (!Array.isArray(azioni) || azioni.length === 0) {
+      return res.json({ message: 'Scena eseguita (nessuna azione configurata)', azioni: 0 });
+    }
+
+    // Esegui le azioni della scena (invio comandi MQTT)
+    const { getMQTTClient } = require('../config/mqtt');
+
+    let azioniEseguite = 0;
+    let azioniBloccate = 0;
+
+    try {
+      const mqttClient = getMQTTClient();
+      for (const azione of azioni) {
+        if (azione.topic) {
+          // ========================================
+          // DEVICE GUARD - Verifica centralizzata
+          // ========================================
+          const guardResult = await canControlDeviceByTopic(azione.topic);
+
+          if (!guardResult.allowed) {
+            console.log(`🔒 GUARD: ${azione.topic} - ${guardResult.reason}`);
+            azioniBloccate++;
+            continue; // Salta questo dispositivo
+          }
+
+          const topic = `cmnd/${azione.topic}/POWER`;
+          const payload = azione.stato === 'ON' ? 'ON' : 'OFF';
+          mqttClient.publish(topic, payload);
+          console.log(`📤 Scene MQTT: ${topic} -> ${payload}`);
+
+          // Aggiorna lo stato nel database per sincronizzare l'UI
+          const newPowerState = azione.stato === 'ON';
+          await query(
+            'UPDATE dispositivi SET power_state = ? WHERE topic_mqtt = ?',
+            [newPowerState, azione.topic]
+          );
+          console.log(`💾 DB Updated: ${azione.topic} -> ${newPowerState}`);
+          azioniEseguite++;
+        }
+      }
+    } catch (mqttError) {
+      console.error('MQTT non disponibile:', mqttError);
+      // Continua comunque - restituisce successo ma senza MQTT
+    }
+
+    const message = azioniBloccate > 0
+      ? `Scena eseguita (${azioniBloccate} dispositiv${azioniBloccate === 1 ? 'o' : 'i'} bloccat${azioniBloccate === 1 ? 'o' : 'i'})`
+      : 'Scena eseguita con successo';
+
+    res.json({ message, azioni: azioniEseguite, bloccati: azioniBloccate });
   } catch (error) {
     console.error('Errore execute scena:', error);
     res.status(500).json({ error: 'Errore durante l\'esecuzione della scena' });
+  }
+};
+
+// ============================================
+// SUN TIMES API
+// ============================================
+
+// GET orari alba/tramonto per un impianto
+export const getSunTimes = async (req: AuthRequest, res: Response) => {
+  try {
+    const { impiantoId } = req.params;
+
+    // Verifica accesso all'impianto
+    const [impianti]: any = await query(
+      `SELECT i.* FROM impianti i
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [impiantoId, req.user!.userId, req.user!.userId]
+    );
+
+    if (impianti.length === 0) {
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    const sunTimes = await getSunTimesForImpianto(parseInt(impiantoId));
+
+    if (!sunTimes) {
+      return res.status(400).json({
+        error: 'Coordinate GPS non configurate per questo impianto',
+        hint: 'Imposta latitudine e longitudine nelle impostazioni dell\'impianto'
+      });
+    }
+
+    res.json({
+      date: new Date().toISOString().split('T')[0],
+      sunrise: formatTime(sunTimes.sunrise),
+      sunset: formatTime(sunTimes.sunset),
+      solarNoon: formatTime(sunTimes.solarNoon),
+      civilDawn: formatTime(sunTimes.civilDawn),
+      civilDusk: formatTime(sunTimes.civilDusk),
+      goldenHourStart: formatTime(sunTimes.goldenHourStart),
+      goldenHourEnd: formatTime(sunTimes.goldenHourEnd),
+      raw: {
+        sunrise: sunTimes.sunrise,
+        sunset: sunTimes.sunset
+      }
+    });
+  } catch (error) {
+    console.error('Errore get sun times:', error);
+    res.status(500).json({ error: 'Errore durante il recupero degli orari solari' });
+  }
+};
+
+// GET orari alba/tramonto per i prossimi giorni
+export const getUpcomingSun = async (req: AuthRequest, res: Response) => {
+  try {
+    const { impiantoId } = req.params;
+    const days = parseInt(req.query.days as string) || 7;
+
+    // Verifica accesso all'impianto
+    const [impianti]: any = await query(
+      `SELECT i.* FROM impianti i
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [impiantoId, req.user!.userId, req.user!.userId]
+    );
+
+    if (impianti.length === 0) {
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    const upcoming = await getUpcomingSunTimes(parseInt(impiantoId), Math.min(days, 30));
+
+    if (upcoming.length === 0) {
+      return res.status(400).json({
+        error: 'Coordinate GPS non configurate per questo impianto'
+      });
+    }
+
+    res.json(upcoming);
+  } catch (error) {
+    console.error('Errore get upcoming sun times:', error);
+    res.status(500).json({ error: 'Errore durante il recupero degli orari solari' });
+  }
+};
+
+// GET statistiche scheduling
+export const getSchedulingStats = async (req: AuthRequest, res: Response) => {
+  try {
+    const stats = getScheduleStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('Errore get scheduling stats:', error);
+    res.status(500).json({ error: 'Errore durante il recupero delle statistiche' });
   }
 };

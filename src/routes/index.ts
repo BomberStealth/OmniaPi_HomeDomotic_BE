@@ -7,6 +7,11 @@ import * as tasmotaController from '../controllers/tasmotaController';
 import * as adminController from '../controllers/adminController';
 import * as stanzeController from '../controllers/stanzeController';
 import * as backupController from '../controllers/backupController';
+import * as geofenceController from '../controllers/geofenceController';
+import * as sensorController from '../controllers/sensorController';
+import * as energyController from '../controllers/energyController';
+import * as presenceController from '../controllers/presenceController';
+import * as smartHomeController from '../controllers/smartHomeController';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
 import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
 import { validate, loginSchema, registerSchema } from '../middleware/validation';
@@ -25,6 +30,8 @@ router.post('/auth/login', loginLimiter, validate(loginSchema), authController.l
 // Registrazione pubblica (auto-registrazione clienti) - protetta da rate limiting
 router.post('/auth/register', registerLimiter, validate(registerSchema), authController.register);
 router.get('/auth/profile', authMiddleware, authController.getProfile);
+router.post('/auth/change-password', authMiddleware, authController.changePassword);
+router.post('/auth/logout', authMiddleware, authController.logout);
 
 // Health check per auth
 router.get('/auth/health', (req, res) => {
@@ -55,6 +62,25 @@ router.post('/impianti/:impiantoId/scene', authMiddleware, sceneController.creat
 router.put('/scene/:id', authMiddleware, sceneController.updateScena);
 router.delete('/scene/:id', authMiddleware, sceneController.deleteScena);
 router.post('/scene/:id/execute', authMiddleware, sceneController.executeScena);
+router.put('/scene/:id/shortcut', authMiddleware, sceneController.toggleShortcut);
+
+// ============================================
+// SUN TIMES ROUTES (Alba/Tramonto)
+// ============================================
+router.get('/impianti/:impiantoId/sun', authMiddleware, sceneController.getSunTimes);
+router.get('/impianti/:impiantoId/sun/upcoming', authMiddleware, sceneController.getUpcomingSun);
+router.get('/scheduling/stats', authMiddleware, sceneController.getSchedulingStats);
+
+// ============================================
+// GEOFENCING ROUTES
+// ============================================
+router.get('/impianti/:impiantoId/geofences', authMiddleware, geofenceController.getGeofences);
+router.post('/impianti/:impiantoId/geofences', authMiddleware, geofenceController.createZone);
+router.put('/geofences/:id', authMiddleware, geofenceController.updateZone);
+router.delete('/geofences/:id', authMiddleware, geofenceController.deleteZone);
+router.post('/location', authMiddleware, geofenceController.updateLocation);
+router.get('/impianti/:impiantoId/geofences/history', authMiddleware, geofenceController.getHistory);
+router.get('/impianti/:impiantoId/presence', authMiddleware, geofenceController.getPresence);
 
 // ============================================
 // STANZE ROUTES
@@ -74,6 +100,39 @@ router.delete('/dispositivi/:id', authMiddleware, tasmotaController.deleteDispos
 router.put('/dispositivi/:id/stanza', authMiddleware, tasmotaController.updateStanzaDispositivo);
 router.post('/dispositivi/:id/control', authMiddleware, tasmotaController.controlDispositivo);
 router.put('/dispositivi/:id/blocco', authMiddleware, tasmotaController.toggleBloccaDispositivo);
+router.put('/dispositivi/:id/nome', authMiddleware, tasmotaController.renameDispositivo);
+router.post('/dispositivi/trovami', authMiddleware, tasmotaController.trovamiDispositivo);
+
+// ============================================
+// SENSOR ROUTES (DHT22, BME280, etc.)
+// ============================================
+router.get('/impianti/:impiantoId/sensors', authMiddleware, sensorController.getSensors);
+router.get('/impianti/:impiantoId/sensors/dashboard', authMiddleware, sensorController.getSensorDashboard);
+router.get('/sensors/:id/readings', authMiddleware, sensorController.getDeviceReadings);
+router.get('/sensors/:id/history', authMiddleware, sensorController.getHistory);
+router.get('/sensors/:id/stats', authMiddleware, sensorController.getStats);
+router.get('/sensors/:id/chart', authMiddleware, sensorController.getChartData);
+
+// ============================================
+// ENERGY MONITORING ROUTES (Shelly EM, etc.)
+// ============================================
+router.get('/impianti/:impiantoId/energy', authMiddleware, energyController.getImpiantoEnergy);
+router.get('/impianti/:impiantoId/energy/dashboard', authMiddleware, energyController.getEnergyDashboard);
+router.get('/energy/:id', authMiddleware, energyController.getDeviceEnergy);
+router.get('/energy/:id/history', authMiddleware, energyController.getPowerHistoryData);
+router.get('/energy/:id/chart/hourly', authMiddleware, energyController.getHourlyChart);
+router.get('/energy/:id/chart/daily', authMiddleware, energyController.getDailyChart);
+
+// ============================================
+// PRESENCE DETECTION ROUTES
+// ============================================
+router.get('/impianti/:impiantoId/tracked-devices', authMiddleware, presenceController.getDevices);
+router.post('/impianti/:impiantoId/tracked-devices', authMiddleware, presenceController.addDevice);
+router.put('/tracked-devices/:id', authMiddleware, presenceController.updateDevice);
+router.delete('/tracked-devices/:id', authMiddleware, presenceController.removeDevice);
+router.get('/impianti/:impiantoId/presence-status', authMiddleware, presenceController.getStatus);
+router.get('/impianti/:impiantoId/presence-history', authMiddleware, presenceController.getHistory);
+router.post('/presence/discover', authMiddleware, presenceController.discover);
 
 // ============================================
 // DISPOSITIVI ROUTES (vecchio sistema)
@@ -86,6 +145,15 @@ router.post('/dispositivi', authMiddleware, roleMiddleware(UserRole.INSTALLATORE
 // ============================================
 router.get('/impianti/:impiantoId/backup', authMiddleware, backupController.exportBackup);
 router.post('/impianti/:impiantoId/restore', authMiddleware, backupController.importBackup);
+
+// ============================================
+// SMART HOME ROUTES (Google Home / Alexa)
+// ============================================
+router.post('/smarthome/google/fulfillment', authMiddleware, smartHomeController.googleFulfillment);
+router.post('/smarthome/alexa/discovery', authMiddleware, smartHomeController.alexaDiscovery);
+router.post('/smarthome/alexa/control', authMiddleware, smartHomeController.alexaControl);
+router.get('/smarthome/devices', authMiddleware, smartHomeController.getDevices);
+router.post('/smarthome/test', authMiddleware, smartHomeController.testCommand);
 
 // ============================================
 // ADMIN ROUTES

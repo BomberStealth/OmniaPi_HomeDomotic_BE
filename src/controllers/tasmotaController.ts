@@ -3,6 +3,7 @@ import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { canControlDeviceById } from '../services/deviceGuard';
 
 // @ts-ignore - evilscan non ha types
 import Evilscan from 'evilscan';
@@ -35,8 +36,13 @@ export const getDispositivi = async (req: AuthRequest, res: Response) => {
       [impiantoId]
     );
 
-    // Assicurati che sia sempre un array
-    const dispositiviArray = Array.isArray(dispositivi) ? dispositivi : [dispositivi];
+    // Assicurati che sia sempre un array valido (no null/undefined)
+    let dispositiviArray: any[] = [];
+    if (Array.isArray(dispositivi)) {
+      dispositiviArray = dispositivi.filter((d: any) => d !== null && d !== undefined);
+    } else if (dispositivi && typeof dispositivi === 'object') {
+      dispositiviArray = [dispositivi];
+    }
     res.json(dispositiviArray);
   } catch (error) {
     console.error('Errore get dispositivi:', error);
@@ -335,6 +341,19 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Comando non valido (ON/OFF/TOGGLE)' });
     }
 
+    // ========================================
+    // DEVICE GUARD - Verifica centralizzata
+    // ========================================
+    const guardResult = await canControlDeviceById(parseInt(id));
+
+    if (!guardResult.allowed) {
+      return res.status(403).json({
+        error: guardResult.reason,
+        blocked: true,
+        device_name: guardResult.device?.nome
+      });
+    }
+
     // Verifica che il dispositivo esista e che l'utente abbia accesso
     const dispositivi: any = await query(
       `SELECT d.* FROM dispositivi d
@@ -429,5 +448,74 @@ export const toggleBloccaDispositivo = async (req: AuthRequest, res: Response) =
   } catch (error) {
     console.error('Errore toggle blocco dispositivo:', error);
     res.status(500).json({ error: 'Errore durante il blocco/sblocco del dispositivo' });
+  }
+};
+
+// POST TROVAMI - lampeggia dispositivo 3 volte
+export const trovamiDispositivo = async (req: AuthRequest, res: Response) => {
+  try {
+    const { ip_address } = req.body;
+
+    if (!ip_address) {
+      return res.status(400).json({ error: 'IP address richiesto' });
+    }
+
+    console.log(`🔍 TROVAMI: lampeggio dispositivo ${ip_address}`);
+
+    // Invia 3 toggle ON/OFF con delay
+    for (let i = 0; i < 3; i++) {
+      await fetch(`http://${ip_address}/cm?cmnd=Power%20ON`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      await new Promise(resolve => setTimeout(resolve, 400));
+      await fetch(`http://${ip_address}/cm?cmnd=Power%20OFF`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+
+    res.json({ success: true, message: 'Dispositivo lampeggiato' });
+  } catch (error) {
+    console.error('Errore TROVAMI:', error);
+    res.status(500).json({ error: 'Impossibile comunicare con il dispositivo' });
+  }
+};
+
+// PUT rinomina dispositivo
+export const renameDispositivo = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { nome } = req.body;
+
+    if (!nome || !nome.trim()) {
+      return res.status(400).json({ error: 'Nome richiesto' });
+    }
+
+    // Verifica che il dispositivo esista e che l'utente abbia accesso
+    const dispositivi: any = await query(
+      `SELECT d.* FROM dispositivi d
+       JOIN impianti i ON d.impianto_id = i.id
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [id, req.user!.userId, req.user!.userId]
+    );
+
+    if (dispositivi.length === 0) {
+      return res.status(404).json({ error: 'Dispositivo non trovato' });
+    }
+
+    // Aggiorna nome
+    await query(
+      'UPDATE dispositivi SET nome = ? WHERE id = ?',
+      [nome.trim(), id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Dispositivo rinominato con successo'
+    });
+  } catch (error) {
+    console.error('Errore rename dispositivo:', error);
+    res.status(500).json({ error: 'Errore durante la rinomina del dispositivo' });
   }
 };

@@ -1,66 +1,114 @@
 import rateLimit from 'express-rate-limit';
+import { rateLimitConfig } from '../config/security';
+import { auditRateLimitExceeded } from '../services/auditLog';
 
 // ============================================
-// RATE LIMITERS SPECIFICI
+// RATE LIMITERS - SECURITY ENHANCED
 // ============================================
 
 /**
  * Rate limiter per login - protezione contro brute force
- * SVILUPPO: Estremamente permissivo per facilitare testing
- * 10000 tentativi ogni 15 minuti
+ * PRODUZIONE: 5 tentativi ogni 15 minuti
+ * SVILUPPO: 50 tentativi ogni 15 minuti
  */
 export const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minuti
-  max: 10000, // Praticamente illimitato per sviluppo
-  message: {
-    success: false,
-    error: 'Troppi tentativi di login. Attendi qualche minuto.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  // Usa IP + User-Agent per evitare falsi positivi su IP condivisi
+  ...rateLimitConfig.login,
   keyGenerator: (req) => {
+    // Usa IP + email per tracciamento più preciso
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    const ua = req.get('user-agent') || 'unknown';
-    return `${ip}-${ua.substring(0, 50)}`;
+    const email = req.body?.email?.toLowerCase() || 'unknown';
+    return `login-${ip}-${email.substring(0, 50)}`;
   },
-  // Skip se l'autenticazione ha successo
-  skipSuccessfulRequests: true
+  handler: (req, res) => {
+    auditRateLimitExceeded('/auth/login', req);
+    res.status(429).json({
+      success: false,
+      error: rateLimitConfig.login.message.error,
+      retryAfter: Math.ceil(rateLimitConfig.login.windowMs / 1000)
+    });
+  }
 });
 
 /**
  * Rate limiter per registrazione
- * SVILUPPO: Estremamente permissivo per testing
+ * PRODUZIONE: 3 registrazioni ogni ora
+ * SVILUPPO: 20 registrazioni ogni ora
  */
 export const registerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 ora
-  max: 10000, // Praticamente illimitato per sviluppo
-  message: {
-    success: false,
-    error: 'Troppi tentativi di registrazione. Riprova tra qualche minuto.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...rateLimitConfig.register,
   keyGenerator: (req) => {
     return req.ip || req.socket.remoteAddress || 'unknown';
   },
-  skipSuccessfulRequests: true
+  handler: (req, res) => {
+    auditRateLimitExceeded('/auth/register', req);
+    res.status(429).json({
+      success: false,
+      error: rateLimitConfig.register.message.error,
+      retryAfter: Math.ceil(rateLimitConfig.register.windowMs / 1000)
+    });
+  }
 });
 
 /**
  * Rate limiter per password reset
- * SVILUPPO: Estremamente permissivo per testing
+ * PRODUZIONE: 3 tentativi ogni ora
+ * SVILUPPO: 20 tentativi ogni ora
  */
 export const passwordResetLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 ora
-  max: 10000, // Praticamente illimitato per sviluppo
+  ...rateLimitConfig.passwordReset,
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const email = req.body?.email?.toLowerCase() || 'unknown';
+    return `reset-${ip}-${email.substring(0, 50)}`;
+  },
+  handler: (req, res) => {
+    auditRateLimitExceeded('/auth/reset-password', req);
+    res.status(429).json({
+      success: false,
+      error: rateLimitConfig.passwordReset.message.error,
+      retryAfter: Math.ceil(rateLimitConfig.passwordReset.windowMs / 1000)
+    });
+  }
+});
+
+/**
+ * Rate limiter per controllo dispositivi
+ * PRODUZIONE: 30 comandi al minuto
+ * SVILUPPO: 200 comandi al minuto
+ */
+export const deviceControlLimiter = rateLimit({
+  ...rateLimitConfig.deviceControl,
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const userId = (req as any).user?.userId || 'unknown';
+    return `device-${ip}-${userId}`;
+  },
+  handler: (req, res) => {
+    auditRateLimitExceeded('/dispositivi/control', req);
+    res.status(429).json({
+      success: false,
+      error: rateLimitConfig.deviceControl.message.error,
+      retryAfter: Math.ceil(rateLimitConfig.deviceControl.windowMs / 1000)
+    });
+  }
+});
+
+/**
+ * Rate limiter per API generiche autenticate
+ * Più permissivo del global limiter
+ */
+export const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: process.env.NODE_ENV === 'production' ? 60 : 300,
   message: {
     success: false,
-    error: 'Troppi tentativi di reset password. Riprova tra un\'ora.'
+    error: 'Troppe richieste. Attendi qualche secondo.'
   },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || 'unknown';
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const userId = (req as any).user?.userId || 'unknown';
+    return `api-${ip}-${userId}`;
   }
 });
