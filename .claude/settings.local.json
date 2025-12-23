@@ -64,24 +64,9 @@
       "Bash(__NEW_LINE__ echo \"\")",
       "Bash(pm2 list:*)",
       "Bash(git fetch:*)",
-      "Bash(npx tsc:*)",
-      "Bash(npx typescript --version)",
-      "Bash(npm start)",
-      "Bash(npm run dev:*)",
-      "Bash(taskkill:*)",
-      "Bash(npx pm2 restart omnia-be)",
-      "Bash(npx pm2 list)",
-      "Bash(npx pm2 start:*)",
-      "Bash(npx pm2:*)",
-      "Bash(powershell \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\")",
-      "Bash(powershell \"Get-Process node -ErrorAction SilentlyContinue | Where-Object {$_Path -like ''*OmniaPi*''} | Stop-Process -Force\")",
-      "Bash(netstat:*)",
-      "Bash(git -C \"c:\\Users\\edoar\\Desktop\\OmniaPi_HomeDomotic_Project\\OmniaPi_HomeDomotic_BE\" status)",
-      "Bash(git -C \"c:\\Users\\edoar\\Desktop\\OmniaPi_HomeDomotic_Project\\OmniaPi_HomeDomotic_FE\" status)",
-      "Bash(git -C \"c:\\Users\\edoar\\Desktop\\OmniaPi_HomeDomotic_Project\\OmniaPi_HomeDomotic_BE\" log --oneline -3)",
-      "Bash(git -C \"c:\\Users\\edoar\\Desktop\\OmniaPi_HomeDomotic_Project\\OmniaPi_HomeDomotic_FE\" log --oneline -3)",
-      "Bash(git -C \"c:\\Users\\edoar\\Desktop\\OmniaPi_HomeDomotic_Project\\OmniaPi_HomeDomotic_FE\" push origin main)",
-      "Bash(git -C \"c:\\Users\\edoar\\Desktop\\OmniaPi_HomeDomotic_Project\\OmniaPi_HomeDomotic_BE\" push origin main)"
+      "Bash(git pull:*)",
+      "Bash(git stash:*)",
+      "Bash(git stash pop:*)"
     ]
   }
 }
