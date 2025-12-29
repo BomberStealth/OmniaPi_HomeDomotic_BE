@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
 import { reloadSchedule, getScheduleStats } from '../services/sceneScheduler';
-import { canControlDeviceByTopic } from '../services/deviceGuard';
+import { canControlDeviceById, canControlDeviceByTopic } from '../services/deviceGuard';
 import { getSunTimesForImpianto, getUpcomingSunTimes, formatTime } from '../services/sunCalculator';
 
 // ============================================
@@ -244,32 +244,60 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
     try {
       const mqttClient = getMQTTClient();
       for (const azione of azioni) {
-        if (azione.topic) {
-          // ========================================
-          // DEVICE GUARD - Verifica centralizzata
-          // ========================================
-          const guardResult = await canControlDeviceByTopic(azione.topic);
+        // ========================================
+        // DEVICE GUARD - Verifica centralizzata
+        // Preferisce dispositivo_id (più affidabile) o fallback su topic
+        // ========================================
+        let guardResult;
+        let deviceId = azione.dispositivo_id;
+        let deviceTopic = azione.topic;
 
-          if (!guardResult.allowed) {
-            console.log(`🔒 GUARD: ${azione.topic} - ${guardResult.reason}`);
-            azioniBloccate++;
-            continue; // Salta questo dispositivo
+        if (deviceId) {
+          // Usa ID dispositivo (più affidabile)
+          guardResult = await canControlDeviceById(deviceId);
+          // Se abbiamo l'ID, recupera anche il topic_mqtt dal device
+          if (guardResult.allowed && guardResult.device) {
+            deviceTopic = guardResult.device.topic_mqtt;
           }
+        } else if (deviceTopic) {
+          // Fallback su topic (legacy)
+          guardResult = await canControlDeviceByTopic(deviceTopic);
+        } else {
+          console.log(`⚠️ GUARD: Azione senza dispositivo_id o topic - saltata`);
+          continue;
+        }
 
-          const topic = `cmnd/${azione.topic}/POWER`;
-          const payload = azione.stato === 'ON' ? 'ON' : 'OFF';
-          mqttClient.publish(topic, payload);
-          console.log(`📤 Scene MQTT: ${topic} -> ${payload}`);
+        if (!guardResult.allowed) {
+          console.log(`🔒 GUARD: Device ${deviceId || deviceTopic} - ${guardResult.reason}`);
+          azioniBloccate++;
+          continue; // Salta questo dispositivo
+        }
 
-          // Aggiorna lo stato nel database per sincronizzare l'UI
-          const newPowerState = azione.stato === 'ON';
+        if (!deviceTopic) {
+          console.log(`⚠️ GUARD: Topic non trovato per dispositivo ${deviceId} - saltato`);
+          continue;
+        }
+
+        const topic = `cmnd/${deviceTopic}/POWER`;
+        const payload = azione.stato === 'ON' ? 'ON' : 'OFF';
+        mqttClient.publish(topic, payload);
+        console.log(`📤 Scene MQTT: ${topic} -> ${payload}`);
+
+        // Aggiorna lo stato nel database per sincronizzare l'UI
+        const newPowerState = azione.stato === 'ON';
+        if (deviceId) {
+          await query(
+            'UPDATE dispositivi SET power_state = ? WHERE id = ?',
+            [newPowerState, deviceId]
+          );
+        } else {
           await query(
             'UPDATE dispositivi SET power_state = ? WHERE topic_mqtt = ?',
-            [newPowerState, azione.topic]
+            [newPowerState, deviceTopic]
           );
-          console.log(`💾 DB Updated: ${azione.topic} -> ${newPowerState}`);
-          azioniEseguite++;
         }
+        console.log(`💾 DB Updated: Device ${deviceId || deviceTopic} -> ${newPowerState}`);
+        azioniEseguite++;
       }
     } catch (mqttError) {
       console.error('MQTT non disponibile:', mqttError);

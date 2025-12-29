@@ -343,6 +343,7 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
 
     // ========================================
     // DEVICE GUARD - Verifica centralizzata
+    // Include già tutti i dati del dispositivo
     // ========================================
     const guardResult = await canControlDeviceById(parseInt(id));
 
@@ -350,31 +351,34 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({
         error: guardResult.reason,
         blocked: true,
-        device_name: guardResult.device?.nome
+        device_name: guardResult.device?.nome,
+        offline: guardResult.device?.stato === 'offline'
       });
     }
 
-    // Verifica che il dispositivo esista e che l'utente abbia accesso
-    const dispositivi: any = await query(
-      `SELECT d.* FROM dispositivi d
+    // Usa il dispositivo già caricato dal guard (evita doppia query)
+    const dispositivo = guardResult.device;
+
+    // Verifica accesso utente (query leggera solo per permessi)
+    const hasAccess: any = await query(
+      `SELECT 1 FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
        LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)
+       LIMIT 1`,
       [id, req.user!.userId, req.user!.userId]
     );
 
-    if (dispositivi.length === 0) {
-      return res.status(404).json({ error: 'Dispositivo non trovato' });
+    if (hasAccess.length === 0) {
+      return res.status(403).json({ error: 'Accesso negato a questo dispositivo' });
     }
 
-    const dispositivo = dispositivi[0];
-
-    // Invia comando HTTP al dispositivo Tasmota (più affidabile di MQTT)
+    // Invia comando HTTP al dispositivo Tasmota
     try {
-      const httpCommand = 'TOGGLE'; // Usa sempre TOGGLE per far scattare il relè
-      const url = `http://${dispositivo.ip_address}/cm?cmnd=Power%20${httpCommand}`;
+      // Usa il comando richiesto (ON/OFF/TOGGLE)
+      const url = `http://${dispositivo.ip_address}/cm?cmnd=Power%20${comando}`;
 
-      console.log(`📤 Sending HTTP: ${url} (requested: ${comando})`);
+      console.log(`📤 Sending HTTP: ${url}`);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -391,8 +395,8 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
       // Aggiorna lo stato del dispositivo nel database basandosi sulla risposta
       const tasmotaPowerState = (result.POWER === 'ON') || (result.POWER1 === 'ON');
       await query(
-        'UPDATE dispositivi SET power_state = ? WHERE id = ?',
-        [tasmotaPowerState, id]
+        'UPDATE dispositivi SET power_state = ?, stato = ? WHERE id = ?',
+        [tasmotaPowerState, 'online', id]
       );
 
       res.json({
@@ -404,8 +408,11 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
       });
     } catch (httpError: any) {
       console.error('Errore HTTP command:', httpError);
+      // Aggiorna stato a offline se non raggiungibile
+      await query('UPDATE dispositivi SET stato = ? WHERE id = ?', ['offline', id]);
       return res.status(503).json({
-        error: `Dispositivo non raggiungibile via HTTP: ${httpError.message}`
+        error: `Dispositivo non raggiungibile`,
+        offline: true
       });
     }
   } catch (error) {

@@ -128,29 +128,75 @@ export const getImpianto = async (req: Request, res: Response) => {
       });
     }
 
-    // Ottieni piani, stanze e dispositivi
-    const piani = await query(
-      'SELECT * FROM piani WHERE impianto_id = ? ORDER BY ordine',
+    // Ottieni tutto con una sola query JOIN (fix N+1 problem)
+    const allData = await query(
+      `SELECT
+        p.id as piano_id, p.nome as piano_nome, p.ordine as piano_ordine,
+        s.id as stanza_id, s.nome as stanza_nome, s.ordine as stanza_ordine, s.icona as stanza_icona,
+        d.id as dispositivo_id, d.nome as dispositivo_nome, d.tipo, d.stato, d.power_state,
+        d.topic_mqtt, d.ip_address, d.mac_address, d.bloccato, d.configurazione
+      FROM piani p
+      LEFT JOIN stanze s ON s.piano_id = p.id
+      LEFT JOIN dispositivi d ON d.stanza_id = s.id
+      WHERE p.impianto_id = ?
+      ORDER BY p.ordine, s.ordine, d.nome`,
       [id]
     ) as RowDataPacket[];
 
-    for (const piano of piani) {
-      const stanze = await query(
-        'SELECT * FROM stanze WHERE piano_id = ? ORDER BY ordine',
-        [piano.id]
-      ) as RowDataPacket[];
+    // Ricostruisci struttura gerarchica in memoria (O(n) invece di O(n³))
+    const pianiMap = new Map<number, any>();
+    const stanzeMap = new Map<number, any>();
 
-      for (const stanza of stanze) {
-        const dispositivi = await query(
-          'SELECT * FROM dispositivi WHERE stanza_id = ?',
-          [stanza.id]
-        ) as RowDataPacket[];
-
-        stanza.dispositivi = dispositivi;
+    for (const row of allData) {
+      // Aggiungi piano se non esiste
+      if (row.piano_id && !pianiMap.has(row.piano_id)) {
+        pianiMap.set(row.piano_id, {
+          id: row.piano_id,
+          nome: row.piano_nome,
+          ordine: row.piano_ordine,
+          stanze: []
+        });
       }
 
-      piano.stanze = stanze;
+      // Aggiungi stanza se non esiste
+      if (row.stanza_id && !stanzeMap.has(row.stanza_id)) {
+        const stanza = {
+          id: row.stanza_id,
+          nome: row.stanza_nome,
+          ordine: row.stanza_ordine,
+          icona: row.stanza_icona,
+          dispositivi: []
+        };
+        stanzeMap.set(row.stanza_id, stanza);
+
+        // Collega stanza al piano
+        const piano = pianiMap.get(row.piano_id);
+        if (piano) {
+          piano.stanze.push(stanza);
+        }
+      }
+
+      // Aggiungi dispositivo alla stanza
+      if (row.dispositivo_id && row.stanza_id) {
+        const stanza = stanzeMap.get(row.stanza_id);
+        if (stanza) {
+          stanza.dispositivi.push({
+            id: row.dispositivo_id,
+            nome: row.dispositivo_nome,
+            tipo: row.tipo,
+            stato: row.stato,
+            power_state: row.power_state,
+            topic_mqtt: row.topic_mqtt,
+            ip_address: row.ip_address,
+            mac_address: row.mac_address,
+            bloccato: row.bloccato,
+            configurazione: row.configurazione
+          });
+        }
+      }
     }
+
+    const piani = Array.from(pianiMap.values());
 
     res.json({
       success: true,
