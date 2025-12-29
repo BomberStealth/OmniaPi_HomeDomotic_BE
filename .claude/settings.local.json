@@ -66,7 +66,17 @@
       "Bash(git fetch:*)",
       "Bash(git pull:*)",
       "Bash(git stash:*)",
-      "Bash(git stash pop:*)"
+      "Bash(git stash pop:*)",
+      "Bash(pkill:*)",
+      "Bash(pm2 kill:*)",
+      "Bash(pm2 startup:*)",
+      "Bash(sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u omniapi --hp /home/omniapi)",
+      "Bash(systemctl is-enabled:*)",
+      "Bash(/usr/bin/mysql:*)",
+      "Bash(mariadb:*)",
+      "Bash(sudo apt list:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)"
     ]
   }
 }
