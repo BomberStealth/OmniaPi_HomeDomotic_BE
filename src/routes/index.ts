@@ -12,6 +12,7 @@ import * as sensorController from '../controllers/sensorController';
 import * as energyController from '../controllers/energyController';
 import * as presenceController from '../controllers/presenceController';
 import * as smartHomeController from '../controllers/smartHomeController';
+import * as omniapiController from '../controllers/omniapiController';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
 import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
 import { validate, loginSchema, registerSchema } from '../middleware/validation';
@@ -154,6 +155,16 @@ router.post('/smarthome/alexa/discovery', authMiddleware, smartHomeController.al
 router.post('/smarthome/alexa/control', authMiddleware, smartHomeController.alexaControl);
 router.get('/smarthome/devices', authMiddleware, smartHomeController.getDevices);
 router.post('/smarthome/test', authMiddleware, smartHomeController.testCommand);
+
+// ============================================
+// OMNIAPI GATEWAY ROUTES (ESP-NOW Nodes)
+// Pubblici per test locale - TODO: aggiungere auth in produzione
+// ============================================
+router.get('/omniapi/gateway', omniapiController.getGatewayStatus);
+router.get('/omniapi/nodes', omniapiController.getNodes);
+router.get('/omniapi/nodes/:mac', omniapiController.getNodeByMac);
+router.post('/omniapi/command', omniapiController.sendCommand);
+router.post('/omniapi/discover', omniapiController.triggerDiscovery);
 
 // ============================================
 // ADMIN ROUTES

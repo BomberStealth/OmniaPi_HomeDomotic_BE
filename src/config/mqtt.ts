@@ -3,12 +3,23 @@ import dotenv from 'dotenv';
 import { query } from './database';
 import { processTasmotaTelemetry } from '../services/sensorService';
 import { processShellyEnergyData } from '../services/energyService';
+import {
+  updateGatewayState,
+  updateNodesFromList,
+  updateNodeState,
+  getAllNodes
+} from '../services/omniapiState';
+import {
+  emitOmniapiGatewayUpdate,
+  emitOmniapiNodeUpdate,
+  emitOmniapiNodesUpdate
+} from '../socket';
 
 dotenv.config();
 
 // ============================================
 // CONFIGURAZIONE MQTT
-// Supporto: Tasmota, Shelly EM, Sensori
+// Supporto: Tasmota, Shelly EM, Sensori, OmniaPi
 // ============================================
 
 const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://localhost:1883';
@@ -20,6 +31,19 @@ let mqttClient: mqtt.MqttClient | null = null;
 // Handler per aggiornare lo stato dispositivo nel database
 const handleMqttMessage = async (topic: string, message: Buffer) => {
   console.log(`📨 MQTT: ${topic} - ${message.toString().substring(0, 100)}`);
+
+  // ======================
+  // OMNIAPI messages
+  // Topic format: omniapi/gateway/...
+  // ======================
+  if (topic.startsWith('omniapi/')) {
+    try {
+      await handleOmniapiMessage(topic, message);
+    } catch (error) {
+      console.error('Errore processamento OmniaPi:', error);
+    }
+    return;
+  }
 
   const parts = topic.split('/');
   if (parts.length < 3) return;
@@ -107,12 +131,16 @@ export const connectMQTT = () => {
 
   mqttClient.on('connect', () => {
     console.log('✅ MQTT connesso con successo');
-    // Subscribe ai topic: Tasmota (stato, telemetria) + Shelly (energia)
+    // Subscribe ai topic: Tasmota (stato, telemetria) + Shelly (energia) + OmniaPi
     const topics = [
-      'stat/+/+',          // Tasmota stato
-      'tele/+/SENSOR',     // Tasmota sensori
+      'stat/+/+',               // Tasmota stato
+      'tele/+/SENSOR',          // Tasmota sensori
       'shellies/+/emeter/+/+',  // Shelly EM energia
-      'shellies/+/relay/+'      // Shelly stato relay
+      'shellies/+/relay/+',     // Shelly stato relay
+      // OmniaPi Gateway topics
+      'omniapi/gateway/status',      // Stato gateway
+      'omniapi/gateway/nodes',       // Lista nodi
+      'omniapi/gateway/node/+/state' // Stato singolo nodo
     ];
     mqttClient?.subscribe(topics, (err) => {
       if (err) console.error('❌ Errore subscribe MQTT:', err);
@@ -141,4 +169,68 @@ export const tasmotaCommand = (topic: string, command: string, value?: any) => {
   const client = getMQTTClient();
   const payload = value !== undefined ? JSON.stringify(value) : '';
   client.publish(`cmnd/${topic}/${command}`, payload);
+};
+
+// ============================================
+// OMNIAPI HANDLER
+// ============================================
+
+const handleOmniapiMessage = async (topic: string, message: Buffer) => {
+  const payload = message.toString();
+  console.log(`📡 OmniaPi MQTT: ${topic}`);
+
+  try {
+    const data = JSON.parse(payload);
+
+    // omniapi/gateway/status
+    if (topic === 'omniapi/gateway/status') {
+      const gateway = updateGatewayState(data);
+      emitOmniapiGatewayUpdate(gateway);
+      return;
+    }
+
+    // omniapi/gateway/nodes
+    if (topic === 'omniapi/gateway/nodes') {
+      if (data.nodes && Array.isArray(data.nodes)) {
+        updateNodesFromList(data.nodes);
+        emitOmniapiNodesUpdate(getAllNodes());
+      }
+      return;
+    }
+
+    // omniapi/gateway/node/{mac}/state
+    // Topic format: omniapi/gateway/node/XX:XX:XX:XX:XX:XX/state
+    const nodeStateMatch = topic.match(/^omniapi\/gateway\/node\/([^/]+)\/state$/);
+    if (nodeStateMatch) {
+      const mac = nodeStateMatch[1];
+      // Expected payload: { relay1: 0|1, relay2: 0|1, online?: boolean }
+      const nodeUpdate = updateNodeState(mac, {
+        relay1: data.relay1 === 1 || data.relay1 === true,
+        relay2: data.relay2 === 1 || data.relay2 === true,
+        online: data.online ?? true
+      });
+      if (nodeUpdate) {
+        emitOmniapiNodeUpdate(nodeUpdate);
+      }
+      return;
+    }
+
+  } catch (error) {
+    console.error('Errore parsing OmniaPi message:', error);
+  }
+};
+
+// ============================================
+// OMNIAPI COMMANDS
+// ============================================
+
+export const omniapiCommand = (nodeMac: string, channel: number, action: 'on' | 'off' | 'toggle') => {
+  const client = getMQTTClient();
+  const payload = JSON.stringify({
+    node_mac: nodeMac,
+    channel,
+    action
+  });
+  client.publish('omniapi/gateway/command', payload);
+  console.log(`📡 OmniaPi command sent: ${nodeMac} ch${channel} ${action}`);
 };

@@ -76,7 +76,8 @@
       "Bash(mariadb:*)",
       "Bash(sudo apt list:*)",
       "Bash(tree:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(npx tsc --noEmit)"
     ]
   }
 }
