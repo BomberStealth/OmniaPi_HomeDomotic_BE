@@ -203,11 +203,13 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
     const nodeStateMatch = topic.match(/^omniapi\/gateway\/node\/([^/]+)\/state$/);
     if (nodeStateMatch) {
       const mac = nodeStateMatch[1];
-      // Expected payload: { relay1: 0|1, relay2: 0|1, online?: boolean }
+      // Expected payload: { relay1: 0|1|"on"|"off", relay2: 0|1|"on"|"off", online?: boolean }
+      const parseRelay = (val: any) => val === 1 || val === true || val === 'on' || val === 'ON';
       const nodeUpdate = updateNodeState(mac, {
-        relay1: data.relay1 === 1 || data.relay1 === true,
-        relay2: data.relay2 === 1 || data.relay2 === true,
-        online: data.online ?? true
+        relay1: parseRelay(data.relay1),
+        relay2: parseRelay(data.relay2),
+        online: data.online ?? true,
+        rssi: data.rssi
       });
       if (nodeUpdate) {
         emitOmniapiNodeUpdate(nodeUpdate);

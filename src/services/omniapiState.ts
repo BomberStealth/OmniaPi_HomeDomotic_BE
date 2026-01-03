@@ -38,18 +38,20 @@ const nodesState: Map<string, OmniapiNode> = new Map();
 // ============================================
 
 export const updateGatewayState = (data: {
+  online?: boolean;
   connected?: boolean;
   ip?: string;
   version?: string;
   nodeCount?: number;
+  nodes_count?: number;
   mqttConnected?: boolean;
 }) => {
   gatewayState = {
-    online: data.connected ?? gatewayState?.online ?? false,
+    online: data.online ?? data.connected ?? gatewayState?.online ?? false,
     ip: data.ip ?? gatewayState?.ip ?? '',
     version: data.version ?? gatewayState?.version ?? '',
-    nodeCount: data.nodeCount ?? gatewayState?.nodeCount ?? 0,
-    mqttConnected: data.mqttConnected ?? gatewayState?.mqttConnected ?? false,
+    nodeCount: data.nodes_count ?? data.nodeCount ?? gatewayState?.nodeCount ?? 0,
+    mqttConnected: data.online ?? data.connected ?? gatewayState?.mqttConnected ?? false,
     lastSeen: new Date()
   };
   console.log('📡 OmniaPi Gateway state updated:', gatewayState);
