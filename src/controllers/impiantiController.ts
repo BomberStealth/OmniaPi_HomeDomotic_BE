@@ -360,6 +360,13 @@ export const deleteImpianto = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
+    // Prima resetta i gateway associati a questo impianto
+    await query(
+      `UPDATE gateways SET impianto_id = NULL, status = 'pending' WHERE impianto_id = ?`,
+      [id]
+    );
+
+    // Poi elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle)
     await query('DELETE FROM impianti WHERE id = ?', [id]);
 
     res.json({

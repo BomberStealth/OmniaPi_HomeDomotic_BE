@@ -13,6 +13,7 @@ import * as energyController from '../controllers/energyController';
 import * as presenceController from '../controllers/presenceController';
 import * as smartHomeController from '../controllers/smartHomeController';
 import * as omniapiController from '../controllers/omniapiController';
+import * as gatewayController from '../controllers/gatewayController';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
 import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
 import { validate, loginSchema, registerSchema } from '../middleware/validation';
@@ -157,6 +158,26 @@ router.post('/smarthome/alexa/discovery', authMiddleware, smartHomeController.al
 router.post('/smarthome/alexa/control', authMiddleware, smartHomeController.alexaControl);
 router.get('/smarthome/devices', authMiddleware, smartHomeController.getDevices);
 router.post('/smarthome/test', authMiddleware, smartHomeController.testCommand);
+
+// ============================================
+// GATEWAY ROUTES (Registrazione e Gestione)
+// ============================================
+// Registrazione gateway (pubblico - chiamato dal gateway dopo connessione WiFi)
+router.post('/gateway/register', gatewayController.registerGateway);
+// Lista gateway in attesa di associazione (qualsiasi utente autenticato)
+router.get('/gateway/pending', authMiddleware, gatewayController.getPendingGateways);
+// Pulizia gateway orfani (solo admin)
+router.post('/gateway/cleanup-orphans', authMiddleware, roleMiddleware(UserRole.ADMIN), gatewayController.cleanupOrphanGateways);
+// Reset manuale gateway a pending (utente autenticato con accesso)
+router.post('/gateway/reset/:mac', authMiddleware, gatewayController.resetGateway);
+// Aggiorna info gateway
+router.put('/gateway/:id', authMiddleware, gatewayController.updateGateway);
+// Gateway dell'impianto
+router.get('/impianti/:impiantoId/gateway', authMiddleware, gatewayController.getImpiantoGateway);
+// Associa gateway all'impianto
+router.post('/impianti/:impiantoId/gateway/associate', authMiddleware, gatewayController.associateGateway);
+// Disassocia gateway dall'impianto
+router.delete('/impianti/:impiantoId/gateway', authMiddleware, gatewayController.disassociateGateway);
 
 // ============================================
 // OMNIAPI GATEWAY ROUTES (ESP-NOW Nodes)

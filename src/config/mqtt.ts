@@ -14,6 +14,10 @@ import {
   emitOmniapiNodeUpdate,
   emitOmniapiNodesUpdate
 } from '../socket';
+import {
+  updateGatewayFromMqtt,
+  markGatewayOffline
+} from '../controllers/gatewayController';
 
 dotenv.config();
 
@@ -138,9 +142,10 @@ export const connectMQTT = () => {
       'shellies/+/emeter/+/+',  // Shelly EM energia
       'shellies/+/relay/+',     // Shelly stato relay
       // OmniaPi Gateway topics
-      'omniapi/gateway/status',      // Stato gateway
-      'omniapi/gateway/nodes',       // Lista nodi
-      'omniapi/gateway/node/+/state' // Stato singolo nodo
+      'omniapi/gateway/status',       // Stato gateway
+      'omniapi/gateway/nodes',        // Lista nodi
+      'omniapi/gateway/node/+/state', // Stato singolo nodo
+      'omniapi/gateway/lwt'           // Last Will and Testament (offline)
     ];
     mqttClient?.subscribe(topics, (err) => {
       if (err) console.error('❌ Errore subscribe MQTT:', err);
@@ -182,10 +187,32 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
   try {
     const data = JSON.parse(payload);
 
+    // omniapi/gateway/lwt (Last Will - Gateway offline)
+    if (topic === 'omniapi/gateway/lwt') {
+      console.log('📴 Gateway offline (LWT):', data.mac || payload);
+      if (data.mac) {
+        await markGatewayOffline(data.mac);
+        // Aggiorna anche lo stato in-memory
+        updateGatewayState({ ...data, online: false });
+        emitOmniapiGatewayUpdate({ mac: data.mac, online: false });
+      }
+      return;
+    }
+
     // omniapi/gateway/status
     if (topic === 'omniapi/gateway/status') {
       const gateway = updateGatewayState(data);
       emitOmniapiGatewayUpdate(gateway);
+
+      // Registra/aggiorna gateway nel database
+      if (data.mac) {
+        await updateGatewayFromMqtt(
+          data.mac,
+          data.ip,
+          data.version,
+          data.node_count ?? data.nodeCount
+        );
+      }
       return;
     }
 
