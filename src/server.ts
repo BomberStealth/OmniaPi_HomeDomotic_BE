@@ -6,6 +6,7 @@ import { connectMQTT } from './config/mqtt';
 import { initializeSocket } from './socket';
 import { loadAllSchedules } from './services/sceneScheduler';
 import { checkConditionalScenes } from './services/conditionsEngine';
+import { runOmniapiMigration } from './utils/migrate-omniapi';
 import logger from './config/logger';
 
 dotenv.config();
@@ -20,6 +21,9 @@ const startServer = async () => {
   try {
     // Test connessione database
     await testConnection();
+
+    // Esegui migrazioni OmniaPi (idempotenti)
+    await runOmniapiMigration();
 
     // Connetti MQTT
     connectMQTT();

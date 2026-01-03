@@ -94,6 +94,8 @@ router.delete('/stanze/:id', authMiddleware, stanzeController.deleteStanza);
 // ============================================
 // DISPOSITIVI TASMOTA ROUTES
 // ============================================
+// Tutti i dispositivi (Tasmota + OmniaPi) - per Scene e Stanze
+router.get('/impianti/:impiantoId/dispositivi/all', authMiddleware, dispositiviController.getAllDispositivi);
 router.get('/impianti/:impiantoId/dispositivi', authMiddleware, tasmotaController.getDispositivi);
 router.post('/impianti/:impiantoId/dispositivi/scan', authMiddleware, tasmotaController.scanTasmota);
 router.post('/impianti/:impiantoId/dispositivi', authMiddleware, tasmotaController.addDispositivo);
@@ -158,13 +160,21 @@ router.post('/smarthome/test', authMiddleware, smartHomeController.testCommand);
 
 // ============================================
 // OMNIAPI GATEWAY ROUTES (ESP-NOW Nodes)
-// Pubblici per test locale - TODO: aggiungere auth in produzione
 // ============================================
+// Stato gateway e nodi (in-memory, real-time)
 router.get('/omniapi/gateway', omniapiController.getGatewayStatus);
 router.get('/omniapi/nodes', omniapiController.getNodes);
 router.get('/omniapi/nodes/:mac', omniapiController.getNodeByMac);
 router.post('/omniapi/command', omniapiController.sendCommand);
 router.post('/omniapi/discover', omniapiController.triggerDiscovery);
+
+// Gestione nodi registrati (DB) - richiede autenticazione
+router.get('/impianti/:impiantoId/omniapi/nodes', authMiddleware, omniapiController.getRegisteredNodes);
+router.get('/impianti/:impiantoId/omniapi/available', authMiddleware, omniapiController.getAvailableNodes);
+router.post('/impianti/:impiantoId/omniapi/register', authMiddleware, omniapiController.registerNode);
+router.delete('/omniapi/nodes/:id', authMiddleware, omniapiController.unregisterNode);
+router.put('/omniapi/nodes/:id', authMiddleware, omniapiController.updateRegisteredNode);
+router.post('/omniapi/nodes/:id/control', authMiddleware, omniapiController.controlRegisteredNode);
 
 // ============================================
 // ADMIN ROUTES
@@ -175,5 +185,6 @@ router.get('/admin/users/:userId/permissions', authMiddleware, roleMiddleware(Us
 router.put('/admin/users/:userId/permissions', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.updateUserPermissions);
 router.put('/admin/users/:userId/role', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.updateUserRole);
 router.delete('/admin/users/:userId', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.deleteUser);
+router.post('/admin/cleanup-scenes', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.cleanupOrphanActions);
 
 export default router;

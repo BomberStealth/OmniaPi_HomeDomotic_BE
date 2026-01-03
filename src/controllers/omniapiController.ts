@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { getGatewayState, getAllNodes, getNode } from '../services/omniapiState';
 import { omniapiCommand } from '../config/mqtt';
+import { query } from '../config/database';
 
 // ============================================
 // OMNIAPI CONTROLLER
@@ -138,3 +139,412 @@ export const triggerDiscovery = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: 'Errore durante la discovery' });
   }
 };
+
+// ============================================
+// REGISTRAZIONE NODI NEL DATABASE
+// ============================================
+
+/**
+ * GET /api/impianti/:impiantoId/omniapi/nodes
+ * Restituisce i nodi OmniaPi registrati per un impianto (dal DB)
+ */
+export const getRegisteredNodes = async (req: AuthRequest, res: Response) => {
+  try {
+    const { impiantoId } = req.params;
+
+    // Verifica accesso all'impianto
+    const impianti: any = await query(
+      `SELECT i.* FROM impianti i
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [impiantoId, req.user!.userId, req.user!.userId]
+    );
+
+    if (!impianti || impianti.length === 0) {
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    // Recupera dispositivi OmniaPi dal DB
+    const dispositivi: any = await query(
+      `SELECT d.*, s.nome as stanza_nome
+       FROM dispositivi d
+       LEFT JOIN stanze s ON d.stanza_id = s.id
+       WHERE d.impianto_id = ? AND d.device_type = 'omniapi_node'
+       ORDER BY d.nome ASC`,
+      [impiantoId]
+    );
+
+    // Arricchisci con stato real-time dalla memoria
+    const nodesWithState = (dispositivi || []).map((d: any) => {
+      const liveNode = getNode(d.mac_address);
+      return {
+        // Map mac_address to mac for frontend compatibility
+        mac: d.mac_address,
+        ...d,
+        // Sovrascrivi con dati live se disponibili
+        online: liveNode?.online ?? false,
+        rssi: liveNode?.rssi ?? d.omniapi_info?.rssi ?? 0,
+        relay1: liveNode?.relay1 ?? false,
+        relay2: liveNode?.relay2 ?? false,
+        firmware_version: liveNode?.version ?? d.omniapi_info?.version ?? 'unknown',
+        lastSeen: liveNode?.lastSeen ?? d.aggiornato_il
+      };
+    });
+
+    res.json({
+      nodes: nodesWithState,
+      count: nodesWithState.length
+    });
+  } catch (error) {
+    console.error('Errore getRegisteredNodes:', error);
+    res.status(500).json({ error: 'Errore durante il recupero dei nodi registrati' });
+  }
+};
+
+/**
+ * GET /api/impianti/:impiantoId/omniapi/available
+ * Restituisce i nodi disponibili (online ma non ancora registrati)
+ */
+export const getAvailableNodes = async (req: AuthRequest, res: Response) => {
+  try {
+    const { impiantoId } = req.params;
+
+    // Verifica accesso all'impianto
+    const impianti: any = await query(
+      `SELECT i.* FROM impianti i
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [impiantoId, req.user!.userId, req.user!.userId]
+    );
+
+    if (!impianti || impianti.length === 0) {
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    // Prendi tutti i nodi live
+    const liveNodes = getAllNodes();
+
+    // Prendi i MAC già registrati
+    const registered: any = await query(
+      `SELECT mac_address FROM dispositivi WHERE device_type = 'omniapi_node'`
+    );
+    const registeredMacs = new Set((registered || []).map((r: any) => r.mac_address));
+
+    // Filtra solo quelli non ancora registrati
+    const availableNodes = liveNodes.filter(node => !registeredMacs.has(node.mac));
+
+    res.json({
+      nodes: availableNodes,
+      count: availableNodes.length
+    });
+  } catch (error) {
+    console.error('Errore getAvailableNodes:', error);
+    res.status(500).json({ error: 'Errore durante il recupero dei nodi disponibili' });
+  }
+};
+
+/**
+ * POST /api/impianti/:impiantoId/omniapi/register
+ * Registra un nodo ESP-NOW come dispositivo nel database
+ * Body: { mac: string, nome: string, stanza_id?: number }
+ */
+export const registerNode = async (req: AuthRequest, res: Response) => {
+  try {
+    const { impiantoId } = req.params;
+    const { mac, nome, stanza_id } = req.body;
+
+    if (!mac || !nome) {
+      return res.status(400).json({ error: 'MAC e nome sono richiesti' });
+    }
+
+    // Verifica accesso all'impianto
+    const impianti: any = await query(
+      `SELECT i.* FROM impianti i
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [impiantoId, req.user!.userId, req.user!.userId]
+    );
+
+    if (!impianti || impianti.length === 0) {
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    // Verifica che il nodo esista (sia online)
+    const liveNode = getNode(mac);
+    if (!liveNode) {
+      return res.status(404).json({ error: 'Nodo non trovato. Assicurati che sia online.' });
+    }
+
+    // Verifica che non sia già registrato
+    const existing: any = await query(
+      `SELECT * FROM dispositivi WHERE mac_address = ?`,
+      [mac]
+    );
+
+    if (existing && existing.length > 0) {
+      return res.status(409).json({
+        error: 'Nodo già registrato',
+        impianto_id: existing[0].impianto_id
+      });
+    }
+
+    // Recupera IP gateway
+    const gateway = getGatewayState();
+    const gatewayIp = gateway?.ip || '192.168.1.205';
+
+    // Inserisci nel DB
+    const result: any = await query(
+      `INSERT INTO dispositivi
+       (impianto_id, stanza_id, tipo, device_type, nome, mac_address, gateway_ip, stato, omniapi_info)
+       VALUES (?, ?, 'luce', 'omniapi_node', ?, ?, ?, 'online', ?)`,
+      [
+        impiantoId,
+        stanza_id || null,
+        nome,
+        mac,
+        gatewayIp,
+        JSON.stringify({
+          version: liveNode.version,
+          rssi: liveNode.rssi,
+          relay1: liveNode.relay1,
+          relay2: liveNode.relay2
+        })
+      ]
+    );
+
+    // Recupera il dispositivo appena creato
+    const dispositivo: any = await query(
+      `SELECT * FROM dispositivi WHERE id = ?`,
+      [result.insertId]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Nodo registrato con successo',
+      dispositivo: dispositivo?.[0] || dispositivo
+    });
+  } catch (error: any) {
+    console.error('Errore registerNode:', error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Nodo già registrato' });
+    }
+    res.status(500).json({ error: 'Errore durante la registrazione del nodo' });
+  }
+};
+
+/**
+ * DELETE /api/omniapi/nodes/:id
+ * Rimuove un nodo dal database E da tutte le scene
+ */
+export const unregisterNode = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const deviceId = parseInt(id);
+
+    // Verifica che il dispositivo esista e sia un nodo OmniaPi
+    const dispositivi: any = await query(
+      `SELECT d.*, d.impianto_id FROM dispositivi d
+       JOIN impianti i ON d.impianto_id = i.id
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE d.id = ? AND d.device_type = 'omniapi_node'
+       AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [deviceId, req.user!.userId, req.user!.userId]
+    );
+
+    if (!dispositivi || dispositivi.length === 0) {
+      return res.status(404).json({ error: 'Nodo non trovato' });
+    }
+
+    const dispositivo = dispositivi[0];
+
+    // 1. Rimuovi il dispositivo dalle scene dell'impianto (cascade)
+    const sceneAggiornate = await removeDeviceFromScenes(deviceId, dispositivo.impianto_id);
+
+    // 2. Elimina dal DB
+    await query('DELETE FROM dispositivi WHERE id = ?', [deviceId]);
+
+    console.log(`🗑️ Nodo ${dispositivo.nome} (ID: ${deviceId}) eliminato. Scene aggiornate: ${sceneAggiornate}`);
+
+    res.json({
+      success: true,
+      message: 'Nodo rimosso con successo',
+      sceneAggiornate
+    });
+  } catch (error) {
+    console.error('Errore unregisterNode:', error);
+    res.status(500).json({ error: 'Errore durante la rimozione del nodo' });
+  }
+};
+
+/**
+ * PUT /api/omniapi/nodes/:id
+ * Aggiorna nome o stanza di un nodo
+ * Body: { nome?: string, stanza_id?: number }
+ */
+export const updateRegisteredNode = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { nome, stanza_id } = req.body;
+
+    // Verifica che il dispositivo esista e sia un nodo OmniaPi
+    const dispositivi: any = await query(
+      `SELECT d.* FROM dispositivi d
+       JOIN impianti i ON d.impianto_id = i.id
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE d.id = ? AND d.device_type = 'omniapi_node'
+       AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [id, req.user!.userId, req.user!.userId]
+    );
+
+    if (!dispositivi || dispositivi.length === 0) {
+      return res.status(404).json({ error: 'Nodo non trovato' });
+    }
+
+    // Costruisci query di update
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (nome !== undefined) {
+      updates.push('nome = ?');
+      values.push(nome);
+    }
+
+    if (stanza_id !== undefined) {
+      updates.push('stanza_id = ?');
+      values.push(stanza_id || null);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'Nessun campo da aggiornare' });
+    }
+
+    values.push(id);
+    await query(
+      `UPDATE dispositivi SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    res.json({
+      success: true,
+      message: 'Nodo aggiornato con successo'
+    });
+  } catch (error) {
+    console.error('Errore updateRegisteredNode:', error);
+    res.status(500).json({ error: 'Errore durante l\'aggiornamento del nodo' });
+  }
+};
+
+/**
+ * POST /api/omniapi/nodes/:id/control
+ * Controlla un nodo registrato (alternativa a /api/omniapi/command)
+ * Body: { channel: 1|2, action: "on"|"off"|"toggle" }
+ */
+export const controlRegisteredNode = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { channel, action } = req.body;
+
+    // Validazione
+    if (!channel || ![1, 2].includes(channel)) {
+      return res.status(400).json({ error: 'channel deve essere 1 o 2' });
+    }
+
+    if (!action || !['on', 'off', 'toggle'].includes(action)) {
+      return res.status(400).json({ error: 'action deve essere on, off, o toggle' });
+    }
+
+    // Verifica che il dispositivo esista e sia un nodo OmniaPi
+    const dispositivi: any = await query(
+      `SELECT d.* FROM dispositivi d
+       JOIN impianti i ON d.impianto_id = i.id
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE d.id = ? AND d.device_type = 'omniapi_node'
+       AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [id, req.user!.userId, req.user!.userId]
+    );
+
+    if (!dispositivi || dispositivi.length === 0) {
+      return res.status(404).json({ error: 'Nodo non trovato' });
+    }
+
+    const dispositivo = dispositivi[0];
+    const mac = dispositivo.mac_address;
+
+    // Verifica che il nodo sia online
+    const liveNode = getNode(mac);
+    if (!liveNode?.online) {
+      return res.status(503).json({ error: 'Nodo offline' });
+    }
+
+    // Invia comando via MQTT
+    omniapiCommand(mac, channel, action as 'on' | 'off' | 'toggle');
+
+    res.json({
+      success: true,
+      message: `Comando inviato: ${dispositivo.nome} ch${channel} ${action}`,
+      dispositivo_id: id,
+      channel,
+      action
+    });
+  } catch (error) {
+    console.error('Errore controlRegisteredNode:', error);
+    res.status(500).json({ error: 'Errore durante il controllo del nodo' });
+  }
+};
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Rimuove un dispositivo da tutte le scene dell'impianto
+ * @returns numero di scene aggiornate
+ */
+async function removeDeviceFromScenes(deviceId: number, impiantoId?: number): Promise<number> {
+  try {
+    // Recupera le scene (filtra per impianto se specificato)
+    const scene: any = impiantoId
+      ? await query('SELECT id, azioni FROM scene WHERE impianto_id = ?', [impiantoId])
+      : await query('SELECT id, azioni FROM scene');
+
+    let sceneAggiornate = 0;
+    for (const scena of scene || []) {
+      try {
+        // Gestisci sia stringa JSON che array già parsato
+        let azioni: any[] = [];
+        if (typeof scena.azioni === 'string' && scena.azioni.trim()) {
+          azioni = JSON.parse(scena.azioni);
+        } else if (Array.isArray(scena.azioni)) {
+          azioni = scena.azioni;
+        }
+
+        if (!Array.isArray(azioni) || azioni.length === 0) continue;
+
+        // Filtra le azioni che non contengono questo dispositivo
+        const azioniAggiornate = azioni.filter((a: any) =>
+          a.dispositivo_id !== deviceId && a.device_id !== deviceId
+        );
+
+        // Se c'è stata una modifica, aggiorna la scena
+        if (azioniAggiornate.length !== azioni.length) {
+          await query(
+            'UPDATE scene SET azioni = ? WHERE id = ?',
+            [JSON.stringify(azioniAggiornate), scena.id]
+          );
+          sceneAggiornate++;
+          console.log(`📝 Rimosso dispositivo ${deviceId} dalla scena ${scena.id}`);
+        }
+      } catch (parseError) {
+        console.error(`Errore parsing azioni scena ${scena.id}:`, parseError);
+      }
+    }
+
+    if (sceneAggiornate > 0) {
+      console.log(`✅ Dispositivo ${deviceId} rimosso da ${sceneAggiornate} scene`);
+    }
+    return sceneAggiornate;
+  } catch (error) {
+    console.error('Errore removeDeviceFromScenes:', error);
+    return 0;
+  }
+}

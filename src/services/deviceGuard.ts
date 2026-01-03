@@ -68,7 +68,7 @@ const updateDeviceStatus = async (deviceId: number, stato: 'online' | 'offline')
 export const canControlDeviceById = async (deviceId: number): Promise<DeviceGuardResult> => {
   try {
     const dispositivi: any = await query(
-      'SELECT id, nome, bloccato, stato, topic_mqtt, ip_address FROM dispositivi WHERE id = ?',
+      'SELECT id, nome, bloccato, stato, topic_mqtt, ip_address, device_type, mac_address FROM dispositivi WHERE id = ?',
       [deviceId]
     );
 
@@ -91,7 +91,16 @@ export const canControlDeviceById = async (deviceId: number): Promise<DeviceGuar
       };
     }
 
-    // CHECK 2: Verifica raggiungibilità REALE via HTTP (se ha IP)
+    // OmniaPi nodes usano ESP-NOW via gateway, non HTTP - sempre permessi se non bloccati
+    if (device.device_type === 'omniapi_node') {
+      console.log(`✅ GUARD: OmniaPi Device ${device.nome} (MAC: ${device.mac_address}) - comando autorizzato`);
+      return {
+        allowed: true,
+        device: { ...device, stato: 'online' }
+      };
+    }
+
+    // CHECK 2: Verifica raggiungibilità REALE via HTTP (solo per Tasmota con IP)
     if (device.ip_address) {
       const reachability = await checkDeviceReachable(device.ip_address);
       if (!reachability.reachable) {
@@ -136,7 +145,7 @@ export const canControlDeviceById = async (deviceId: number): Promise<DeviceGuar
 export const canControlDeviceByTopic = async (topicMqtt: string): Promise<DeviceGuardResult> => {
   try {
     const dispositivi: any = await query(
-      'SELECT id, nome, bloccato, stato, topic_mqtt, ip_address FROM dispositivi WHERE topic_mqtt = ?',
+      'SELECT id, nome, bloccato, stato, topic_mqtt, ip_address, device_type, mac_address FROM dispositivi WHERE topic_mqtt = ?',
       [topicMqtt]
     );
 
@@ -158,6 +167,15 @@ export const canControlDeviceByTopic = async (topicMqtt: string): Promise<Device
         allowed: false,
         reason: `Dispositivo "${device.nome}" è bloccato`,
         device
+      };
+    }
+
+    // OmniaPi nodes usano ESP-NOW via gateway, non HTTP - sempre permessi se non bloccati
+    if (device.device_type === 'omniapi_node') {
+      console.log(`✅ GUARD: OmniaPi Device ${device.nome} (MAC: ${device.mac_address}) - comando autorizzato`);
+      return {
+        allowed: true,
+        device: { ...device, stato: 'online' }
       };
     }
 

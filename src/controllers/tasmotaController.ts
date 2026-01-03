@@ -32,7 +32,10 @@ export const getDispositivi = async (req: AuthRequest, res: Response) => {
     }
 
     const [dispositivi]: any = await query(
-      'SELECT * FROM dispositivi WHERE impianto_id = ? ORDER BY nome ASC',
+      `SELECT * FROM dispositivi
+       WHERE impianto_id = ?
+       AND (device_type IS NULL OR device_type != 'omniapi_node')
+       ORDER BY nome ASC`,
       [impiantoId]
     );
 
@@ -263,26 +266,62 @@ export const addDispositivo = async (req: AuthRequest, res: Response) => {
 };
 
 // DELETE rimuovi dispositivo
+// IMPORTANTE: Rimuove il dispositivo da TUTTO (scene, stanze, ecc.)
 export const deleteDispositivo = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    const deviceId = parseInt(id);
 
     // Verifica che il dispositivo esista e che l'utente abbia accesso
-    const [dispositivi]: any = await query(
-      `SELECT d.* FROM dispositivi d
+    const dispositivi: any = await query(
+      `SELECT d.*, d.impianto_id FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
        LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
        WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
-      [id, req.user!.userId, req.user!.userId]
+      [deviceId, req.user!.userId, req.user!.userId]
     );
 
     if (dispositivi.length === 0) {
       return res.status(404).json({ error: 'Dispositivo non trovato' });
     }
 
-    await query('DELETE FROM dispositivi WHERE id = ?', [id]);
+    const dispositivo = dispositivi[0];
 
-    res.json({ message: 'Dispositivo rimosso con successo' });
+    // 1. Rimuovi il dispositivo dalle azioni di TUTTE le scene dell'impianto
+    const scene: any = await query(
+      'SELECT id, azioni FROM scene WHERE impianto_id = ?',
+      [dispositivo.impianto_id]
+    );
+
+    let sceneAggiornate = 0;
+    for (const scena of scene) {
+      if (scena.azioni && Array.isArray(scena.azioni)) {
+        // Filtra le azioni rimuovendo quelle del dispositivo eliminato
+        const azioniAggiornate = scena.azioni.filter(
+          (azione: any) => azione.dispositivo_id !== deviceId
+        );
+
+        // Aggiorna solo se ci sono state modifiche
+        if (azioniAggiornate.length !== scena.azioni.length) {
+          await query(
+            'UPDATE scene SET azioni = ? WHERE id = ?',
+            [JSON.stringify(azioniAggiornate), scena.id]
+          );
+          sceneAggiornate++;
+          console.log(`📝 Rimosso dispositivo ${deviceId} dalla scena ${scena.id}`);
+        }
+      }
+    }
+
+    // 2. Elimina il dispositivo dal database
+    await query('DELETE FROM dispositivi WHERE id = ?', [deviceId]);
+
+    console.log(`🗑️ Dispositivo ${dispositivo.nome} (ID: ${deviceId}) eliminato. Scene aggiornate: ${sceneAggiornate}`);
+
+    res.json({
+      message: 'Dispositivo rimosso con successo',
+      sceneAggiornate
+    });
   } catch (error) {
     console.error('Errore delete dispositivo:', error);
     res.status(500).json({ error: 'Errore durante la rimozione del dispositivo' });

@@ -3,6 +3,7 @@ import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
 import { reloadSchedule, getScheduleStats } from '../services/sceneScheduler';
 import { canControlDeviceById, canControlDeviceByTopic } from '../services/deviceGuard';
+import { omniapiCommand } from '../config/mqtt';
 import { getSunTimesForImpianto, getUpcomingSunTimes, formatTime } from '../services/sunCalculator';
 
 // ============================================
@@ -273,6 +274,20 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
           continue; // Salta questo dispositivo
         }
 
+        const device = guardResult.device;
+        const newPowerState = azione.stato === 'ON';
+
+        // Gestisci dispositivi OmniaPi (ESP-NOW)
+        if (device?.device_type === 'omniapi_node' && device?.mac_address) {
+          const action = newPowerState ? 'on' : 'off';
+          omniapiCommand(device.mac_address, 1, action);
+          console.log(`📡 Scene OmniaPi: ${device.mac_address} ch1 ${action}`);
+          await query('UPDATE dispositivi SET power_state = ? WHERE id = ?', [newPowerState, deviceId]);
+          azioniEseguite++;
+          continue;
+        }
+
+        // Dispositivi Tasmota
         if (!deviceTopic) {
           console.log(`⚠️ GUARD: Topic non trovato per dispositivo ${deviceId} - saltato`);
           continue;
@@ -284,7 +299,6 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
         console.log(`📤 Scene MQTT: ${topic} -> ${payload}`);
 
         // Aggiorna lo stato nel database per sincronizzare l'UI
-        const newPowerState = azione.stato === 'ON';
         if (deviceId) {
           await query(
             'UPDATE dispositivi SET power_state = ? WHERE id = ?',

@@ -194,6 +194,8 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       if (data.nodes && Array.isArray(data.nodes)) {
         updateNodesFromList(data.nodes);
         emitOmniapiNodesUpdate(getAllNodes());
+        // Sync nodi al database
+        await syncNodesToDatabase(data.nodes);
       }
       return;
     }
@@ -205,20 +207,112 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       const mac = nodeStateMatch[1];
       // Expected payload: { relay1: 0|1|"on"|"off", relay2: 0|1|"on"|"off", online?: boolean }
       const parseRelay = (val: any) => val === 1 || val === true || val === 'on' || val === 'ON';
+      const relay1 = parseRelay(data.relay1);
+      const relay2 = parseRelay(data.relay2);
       const nodeUpdate = updateNodeState(mac, {
-        relay1: parseRelay(data.relay1),
-        relay2: parseRelay(data.relay2),
+        relay1,
+        relay2,
         online: data.online ?? true,
         rssi: data.rssi
       });
       if (nodeUpdate) {
         emitOmniapiNodeUpdate(nodeUpdate);
+        // Sync stato al database
+        await syncNodeStateToDatabase(mac, {
+          relay1,
+          relay2,
+          rssi: data.rssi,
+          online: data.online ?? true
+        });
       }
       return;
     }
 
   } catch (error) {
     console.error('Errore parsing OmniaPi message:', error);
+  }
+};
+
+// ============================================
+// SYNC OMNIAPI → DATABASE
+// ============================================
+
+/**
+ * Sincronizza la lista nodi al database (update stato online/offline)
+ */
+const syncNodesToDatabase = async (nodes: any[]) => {
+  try {
+    const macs = nodes.map(n => n.mac);
+
+    // Segna tutti i nodi registrati come offline prima
+    await query(
+      `UPDATE dispositivi SET stato = 'offline'
+       WHERE device_type = 'omniapi_node'
+       AND mac_address NOT IN (?)`,
+      [macs.length > 0 ? macs : ['']]
+    );
+
+    // Aggiorna ogni nodo online
+    for (const node of nodes) {
+      await query(
+        `UPDATE dispositivi SET
+          stato = 'online',
+          omniapi_info = JSON_SET(
+            COALESCE(omniapi_info, '{}'),
+            '$.rssi', ?,
+            '$.version', ?,
+            '$.relay1', ?,
+            '$.relay2', ?
+          ),
+          aggiornato_il = NOW()
+         WHERE mac_address = ? AND device_type = 'omniapi_node'`,
+        [
+          node.rssi || 0,
+          node.version || 'unknown',
+          node.relay1 ? true : false,
+          node.relay2 ? true : false,
+          node.mac
+        ]
+      );
+    }
+  } catch (error) {
+    console.error('Errore sync nodi DB:', error);
+  }
+};
+
+/**
+ * Sincronizza lo stato di un singolo nodo al database
+ */
+const syncNodeStateToDatabase = async (mac: string, state: {
+  relay1: boolean;
+  relay2: boolean;
+  rssi?: number;
+  online?: boolean;
+}) => {
+  try {
+    await query(
+      `UPDATE dispositivi SET
+        stato = ?,
+        power_state = ?,
+        omniapi_info = JSON_SET(
+          COALESCE(omniapi_info, '{}'),
+          '$.rssi', ?,
+          '$.relay1', ?,
+          '$.relay2', ?
+        ),
+        aggiornato_il = NOW()
+       WHERE mac_address = ? AND device_type = 'omniapi_node'`,
+      [
+        state.online !== false ? 'online' : 'offline',
+        state.relay1 || state.relay2, // power_state = true se almeno un relay è on
+        state.rssi || 0,
+        state.relay1,
+        state.relay2,
+        mac
+      ]
+    );
+  } catch (error) {
+    console.error('Errore sync stato nodo DB:', error);
   }
 };
 

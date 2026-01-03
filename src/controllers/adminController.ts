@@ -192,3 +192,63 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: 'Errore durante l\'eliminazione dell\'utente' });
   }
 };
+
+// POST pulizia azioni orfane nelle scene (solo admin)
+export const cleanupOrphanActions = async (req: AuthRequest, res: Response) => {
+  try {
+    // 1. Ottieni tutti i dispositivi esistenti
+    const dispositivi: any = await query('SELECT id FROM dispositivi');
+    const dispositiviIds = new Set(dispositivi.map((d: any) => d.id));
+
+    // 2. Ottieni tutte le scene
+    const scene: any = await query('SELECT id, nome, azioni FROM scene');
+
+    let sceneAggiornate = 0;
+    let azioniRimosse = 0;
+
+    for (const scena of scene) {
+      let azioni = [];
+      try {
+        if (typeof scena.azioni === 'string' && scena.azioni.trim()) {
+          azioni = JSON.parse(scena.azioni);
+        } else if (Array.isArray(scena.azioni)) {
+          azioni = scena.azioni;
+        }
+      } catch {
+        continue;
+      }
+
+      if (!Array.isArray(azioni) || azioni.length === 0) continue;
+
+      // Filtra azioni con dispositivi esistenti
+      const azioniValide = azioni.filter((a: any) => {
+        const deviceId = a.dispositivo_id;
+        if (!deviceId) return true;
+        return dispositiviIds.has(deviceId);
+      });
+
+      const rimosse = azioni.length - azioniValide.length;
+      if (rimosse > 0) {
+        azioniRimosse += rimosse;
+        sceneAggiornate++;
+
+        await query(
+          'UPDATE scene SET azioni = ? WHERE id = ?',
+          [JSON.stringify(azioniValide), scena.id]
+        );
+        console.log(`📝 Scena ${scena.id} (${scena.nome}): rimosse ${rimosse} azioni orfane`);
+      }
+    }
+
+    console.log(`✅ Pulizia completata: ${sceneAggiornate} scene, ${azioniRimosse} azioni rimosse`);
+
+    res.json({
+      success: true,
+      sceneAggiornate,
+      azioniRimosse
+    });
+  } catch (error) {
+    console.error('Errore cleanup orphan actions:', error);
+    res.status(500).json({ error: 'Errore durante la pulizia' });
+  }
+};

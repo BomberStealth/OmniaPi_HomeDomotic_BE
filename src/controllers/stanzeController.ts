@@ -139,9 +139,55 @@ export const deleteStanza = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Stanza non trovata' });
     }
 
+    const stanza = stanze[0];
+
+    // 1. Trova tutti i dispositivi in questa stanza
+    const dispositivi: any = await query(
+      'SELECT id FROM dispositivi WHERE stanza_id = ?',
+      [id]
+    );
+    const deviceIds = dispositivi.map((d: any) => d.id);
+
+    if (deviceIds.length > 0) {
+      // 2. Rimuovi i dispositivi dalle azioni delle scene
+      const scene: any = await query(
+        'SELECT id, azioni FROM scene WHERE impianto_id = ?',
+        [stanza.impianto_id]
+      );
+
+      for (const scena of scene) {
+        if (scena.azioni && Array.isArray(scena.azioni)) {
+          // Filtra le azioni rimuovendo quelle dei dispositivi eliminati
+          const azioniAggiornate = scena.azioni.filter(
+            (azione: any) => !deviceIds.includes(azione.dispositivo_id)
+          );
+
+          // Aggiorna solo se ci sono state modifiche
+          if (azioniAggiornate.length !== scena.azioni.length) {
+            await query(
+              'UPDATE scene SET azioni = ? WHERE id = ?',
+              [JSON.stringify(azioniAggiornate), scena.id]
+            );
+            console.log(`📝 Rimossi dispositivi dalla scena "${scena.id}": ${scena.azioni.length - azioniAggiornate.length} azioni`);
+          }
+        }
+      }
+
+      // 3. Imposta stanza_id = NULL per i dispositivi (tornano a "Non assegnati")
+      await query(
+        'UPDATE dispositivi SET stanza_id = NULL WHERE stanza_id = ?',
+        [id]
+      );
+      console.log(`📝 ${deviceIds.length} dispositivi spostati in "Non assegnati"`);
+    }
+
+    // 4. Elimina la stanza
     await query('DELETE FROM stanze WHERE id = ?', [id]);
 
-    res.json({ message: 'Stanza eliminata con successo' });
+    res.json({
+      message: 'Stanza eliminata con successo',
+      devicesUnassigned: deviceIds.length
+    });
   } catch (error) {
     console.error('Errore delete stanza:', error);
     res.status(500).json({ error: 'Errore durante l\'eliminazione della stanza' });

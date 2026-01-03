@@ -3,10 +3,65 @@ import { query } from '../config/database';
 import { tasmotaCommand } from '../config/mqtt';
 import { TipoDispositivo } from '../types';
 import { RowDataPacket } from 'mysql2';
+import { AuthRequest } from '../middleware/auth';
+import { getNode } from '../services/omniapiState';
 
 // ============================================
 // CONTROLLER DISPOSITIVI
 // ============================================
+
+/**
+ * GET /api/impianti/:impiantoId/dispositivi/all
+ * Restituisce TUTTI i dispositivi di un impianto (Tasmota + OmniaPi)
+ * Usato per Scene e Stanze
+ */
+export const getAllDispositivi = async (req: AuthRequest, res: Response) => {
+  try {
+    const { impiantoId } = req.params;
+
+    // Verifica accesso all'impianto
+    const impianti: any = await query(
+      `SELECT i.* FROM impianti i
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [impiantoId, req.user!.userId, req.user!.userId]
+    );
+
+    if (impianti.length === 0) {
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    // Recupera TUTTI i dispositivi (senza filtro device_type)
+    const dispositivi: any = await query(
+      `SELECT d.*, s.nome as stanza_nome
+       FROM dispositivi d
+       LEFT JOIN stanze s ON d.stanza_id = s.id
+       WHERE d.impianto_id = ?
+       ORDER BY d.nome ASC`,
+      [impiantoId]
+    );
+
+    // Arricchisci i nodi OmniaPi con stato real-time
+    const dispositiviEnriched = (dispositivi || []).map((d: any) => {
+      if (d.device_type === 'omniapi_node' && d.mac_address) {
+        const liveNode = getNode(d.mac_address);
+        return {
+          ...d,
+          mac: d.mac_address,
+          online: liveNode?.online ?? false,
+          relay1: liveNode?.relay1 ?? false,
+          relay2: liveNode?.relay2 ?? false,
+        };
+      }
+      return d;
+    });
+
+    res.json(dispositiviEnriched);
+  } catch (error) {
+    console.error('Errore getAllDispositivi:', error);
+    res.status(500).json({ error: 'Errore durante il recupero dei dispositivi' });
+  }
+};
 
 // Ottieni dispositivi di una stanza
 export const getDispositivi = async (req: Request, res: Response) => {
@@ -120,8 +175,47 @@ export const controlDispositivo = async (req: Request, res: Response) => {
 export const deleteDispositivo = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const deviceId = parseInt(id);
 
-    await query('DELETE FROM dispositivi WHERE id = ?', [id]);
+    // 1. Trova il dispositivo per ottenere impianto_id
+    const dispositivi: any = await query(
+      'SELECT id, impianto_id, nome FROM dispositivi WHERE id = ?',
+      [deviceId]
+    );
+
+    if (dispositivi.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Dispositivo non trovato'
+      });
+    }
+
+    const dispositivo = dispositivi[0];
+
+    // 2. Rimuovi il dispositivo dalle azioni delle scene
+    const scene: any = await query(
+      'SELECT id, azioni FROM scene WHERE impianto_id = ?',
+      [dispositivo.impianto_id]
+    );
+
+    for (const scena of scene) {
+      if (scena.azioni && Array.isArray(scena.azioni)) {
+        const azioniAggiornate = scena.azioni.filter(
+          (azione: any) => azione.dispositivo_id !== deviceId
+        );
+
+        if (azioniAggiornate.length !== scena.azioni.length) {
+          await query(
+            'UPDATE scene SET azioni = ? WHERE id = ?',
+            [JSON.stringify(azioniAggiornate), scena.id]
+          );
+          console.log(`📝 Dispositivo ${dispositivo.nome} rimosso dalla scena ${scena.id}`);
+        }
+      }
+    }
+
+    // 3. Elimina il dispositivo
+    await query('DELETE FROM dispositivi WHERE id = ?', [deviceId]);
 
     res.json({
       success: true,
@@ -131,7 +225,7 @@ export const deleteDispositivo = async (req: Request, res: Response) => {
     console.error('Errore delete dispositivo:', error);
     res.status(500).json({
       success: false,
-      error: 'Errore durante l\'eliminazione del dispositivo'
+      error: "Errore durante l'eliminazione del dispositivo"
     });
   }
 };
