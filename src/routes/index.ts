@@ -61,6 +61,7 @@ router.delete('/condivisioni/:id', authMiddleware, impiantiController.revokeCond
 // ============================================
 router.get('/impianti/:impiantoId/scene', authMiddleware, sceneController.getScene);
 router.post('/impianti/:impiantoId/scene', authMiddleware, sceneController.createScena);
+router.post('/impianti/:impiantoId/scene/auto-populate', authMiddleware, sceneController.autoPopulateDefaultScenes);
 router.put('/scene/:id', authMiddleware, sceneController.updateScena);
 router.delete('/scene/:id', authMiddleware, sceneController.deleteScena);
 router.post('/scene/:id/execute', authMiddleware, sceneController.executeScena);

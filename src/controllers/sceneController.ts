@@ -422,3 +422,130 @@ export const getSchedulingStats = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: 'Errore durante il recupero delle statistiche' });
   }
 };
+
+// POST auto-popola scene Entra/Esci con tutti i dispositivi
+export const autoPopulateDefaultScenes = async (req: AuthRequest, res: Response) => {
+  console.log('\n[auto-populate] ======================================');
+  console.log('[auto-populate] INIZIO AUTO-POPULATE SCENE');
+  console.log('[auto-populate] ======================================');
+
+  try {
+    const { impiantoId } = req.params;
+    console.log('[auto-populate] Impianto ID ricevuto:', impiantoId);
+    console.log('[auto-populate] User ID:', req.user!.userId);
+
+    // Verifica accesso all'impianto
+    const impianti: any = await query(
+      `SELECT i.* FROM impianti i
+       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+      [impiantoId, req.user!.userId, req.user!.userId]
+    );
+
+    console.log('[auto-populate] Impianti trovati:', impianti.length);
+
+    if (impianti.length === 0) {
+      console.log('[auto-populate] ERRORE: Impianto non trovato o accesso negato');
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    // Ottieni tutti i dispositivi dell'impianto (query diretta su impianto_id)
+    const dispositivi: any = await query(
+      `SELECT id, nome, topic_mqtt, mac_address, device_type
+       FROM dispositivi
+       WHERE impianto_id = ?`,
+      [impiantoId]
+    );
+
+    console.log('[auto-populate] Dispositivi trovati:', dispositivi.length);
+    if (dispositivi.length > 0) {
+      console.log('[auto-populate] Lista dispositivi:', dispositivi.map((d: any) => ({
+        id: d.id,
+        nome: d.nome,
+        mac: d.mac_address,
+        type: d.device_type
+      })));
+    }
+
+    if (dispositivi.length === 0) {
+      console.log('[auto-populate] Nessun dispositivo - ritorno early');
+      return res.json({
+        message: 'Nessun dispositivo trovato per popolare le scene',
+        populated: 0
+      });
+    }
+
+    // Trova le scene Entra e Esci
+    const scene: any = await query(
+      `SELECT id, nome FROM scene WHERE impianto_id = ? AND nome IN ('Entra', 'Esci')`,
+      [impiantoId]
+    );
+
+    console.log('[auto-populate] Scene trovate:', scene.length);
+    console.log('[auto-populate] Scene dettaglio:', scene.map((s: any) => ({ id: s.id, nome: s.nome })));
+
+    const scenaEntra = scene.find((s: any) => s.nome === 'Entra');
+    const scenaEsci = scene.find((s: any) => s.nome === 'Esci');
+
+    console.log('[auto-populate] Scena Entra:', scenaEntra ? `ID ${scenaEntra.id}` : 'NON TROVATA');
+    console.log('[auto-populate] Scena Esci:', scenaEsci ? `ID ${scenaEsci.id}` : 'NON TROVATA');
+
+    if (!scenaEntra && !scenaEsci) {
+      console.log('[auto-populate] ERRORE: Nessuna scena Entra/Esci trovata!');
+      return res.status(404).json({ error: 'Scene Entra/Esci non trovate' });
+    }
+
+    // Costruisci le azioni per ogni dispositivo
+    const azioniEntra = dispositivi.map((d: any) => ({
+      dispositivo_id: d.id,
+      topic: d.topic_mqtt,
+      nome: d.nome,
+      stato: 'ON'
+    }));
+
+    const azioniEsci = dispositivi.map((d: any) => ({
+      dispositivo_id: d.id,
+      topic: d.topic_mqtt,
+      nome: d.nome,
+      stato: 'OFF'
+    }));
+
+    console.log('[auto-populate] Azioni Entra da salvare:', JSON.stringify(azioniEntra));
+    console.log('[auto-populate] Azioni Esci da salvare:', JSON.stringify(azioniEsci));
+
+    // Aggiorna le scene
+    if (scenaEntra) {
+      console.log('[auto-populate] Aggiornando scena Entra ID:', scenaEntra.id);
+      await query(
+        'UPDATE scene SET azioni = ? WHERE id = ?',
+        [JSON.stringify(azioniEntra), scenaEntra.id]
+      );
+      console.log('[auto-populate] Scena Entra aggiornata OK');
+    }
+
+    if (scenaEsci) {
+      console.log('[auto-populate] Aggiornando scena Esci ID:', scenaEsci.id);
+      await query(
+        'UPDATE scene SET azioni = ? WHERE id = ?',
+        [JSON.stringify(azioniEsci), scenaEsci.id]
+      );
+      console.log('[auto-populate] Scena Esci aggiornata OK');
+    }
+
+    console.log('[auto-populate] ======================================');
+    console.log(`[auto-populate] ✅ SUCCESSO: ${dispositivi.length} dispositivi aggiunti alle scene`);
+    console.log('[auto-populate] ======================================\n');
+
+    res.json({
+      message: 'Scene auto-popolate con successo',
+      populated: dispositivi.length,
+      scenes: {
+        entra: scenaEntra ? azioniEntra.length : 0,
+        esci: scenaEsci ? azioniEsci.length : 0
+      }
+    });
+  } catch (error) {
+    console.error('[auto-populate] ❌ ERRORE:', error);
+    res.status(500).json({ error: 'Errore durante l\'auto-popolamento delle scene' });
+  }
+};
