@@ -85,7 +85,12 @@
       "Bash(git clone:*)",
       "Bash(./install.sh:*)",
       "Bash(source:*)",
-      "Bash(idf.py build:*)"
+      "Bash(idf.py build:*)",
+      "Bash(git remote:*)",
+      "Bash(git rebase:*)",
+      "Bash(git checkout:*)",
+      "Bash(git reset:*)",
+      "Bash(npx ts-node:*)"
     ]
   }
 }

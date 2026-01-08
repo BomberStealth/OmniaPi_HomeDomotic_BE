@@ -14,6 +14,7 @@ import * as presenceController from '../controllers/presenceController';
 import * as smartHomeController from '../controllers/smartHomeController';
 import * as omniapiController from '../controllers/omniapiController';
 import * as gatewayController from '../controllers/gatewayController';
+import * as notificationController from '../controllers/notificationController';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
 import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
 import { validate, loginSchema, registerSchema } from '../middleware/validation';
@@ -208,5 +209,12 @@ router.put('/admin/users/:userId/permissions', authMiddleware, roleMiddleware(Us
 router.put('/admin/users/:userId/role', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.updateUserRole);
 router.delete('/admin/users/:userId', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.deleteUser);
 router.post('/admin/cleanup-scenes', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.cleanupOrphanActions);
+
+// ============================================
+// NOTIFICATIONS ROUTES (Firebase Cloud Messaging)
+// ============================================
+router.post('/notifications/register', authMiddleware, notificationController.registerToken);
+router.delete('/notifications/unregister', authMiddleware, notificationController.unregisterToken);
+router.post('/notifications/test', authMiddleware, notificationController.sendTestNotification);
 
 export default router;
