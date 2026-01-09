@@ -1,11 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+// RATE LIMITING DISABILITATO - causava blocchi ingiustificati
+// import rateLimit from 'express-rate-limit';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
-import { corsConfig, rateLimitConfig, securityHeaders } from './config/security';
-import { auditRateLimitExceeded } from './services/auditLog';
+import { corsConfig, securityHeaders } from './config/security';
+// import { auditRateLimitExceeded } from './services/auditLog';
 
 // ============================================
 // EXPRESS APP CONFIGURATION - SECURITY ENHANCED
@@ -28,19 +29,18 @@ app.use(helmet({
 // CORS - Secure whitelist configuration
 app.use(cors(corsConfig));
 
-// Global Rate limiting with audit logging
-const globalLimiter = rateLimit({
-  ...rateLimitConfig.global,
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  },
-  handler: (req, res) => {
-    // Log rate limit exceeded
-    auditRateLimitExceeded(req.path, req);
-    res.status(429).json(rateLimitConfig.global.message);
-  }
-});
-app.use('/api/', globalLimiter);
+// RATE LIMITING GLOBALE DISABILITATO
+// const globalLimiter = rateLimit({
+//   ...rateLimitConfig.global,
+//   keyGenerator: (req) => {
+//     return req.ip || req.socket.remoteAddress || 'unknown';
+//   },
+//   handler: (req, res) => {
+//     auditRateLimitExceeded(req.path, req);
+//     res.status(429).json(rateLimitConfig.global.message);
+//   }
+// });
+// app.use('/api/', globalLimiter);
 
 // Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));

@@ -99,11 +99,11 @@ export const rateLimitConfig = {
 
   // Login limiter - protezione brute force
   login: {
-    windowMs: 15 * 60 * 1000, // 15 minuti
-    max: process.env.NODE_ENV === 'production' ? 5 : 50, // 5 tentativi in produzione
+    windowMs: 2 * 60 * 1000, // 2 minuti (ridotto da 15)
+    max: process.env.NODE_ENV === 'production' ? 10 : 50, // 10 tentativi in produzione (aumentato da 5)
     message: {
       success: false,
-      error: 'Troppi tentativi di login. Account temporaneamente bloccato per 15 minuti.'
+      error: 'Troppi tentativi di login. Riprova tra 2 minuti.'
     },
     standardHeaders: true,
     legacyHeaders: false,

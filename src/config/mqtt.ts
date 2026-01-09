@@ -18,6 +18,7 @@ import {
   updateGatewayFromMqtt,
   markGatewayOffline
 } from '../controllers/gatewayController';
+import * as notificationService from '../services/notificationService';
 
 dotenv.config();
 
@@ -195,6 +196,30 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
         // Aggiorna anche lo stato in-memory
         updateGatewayState({ ...data, online: false });
         emitOmniapiGatewayUpdate({ mac: data.mac, online: false });
+
+        // Recupera impianto_id dal gateway MAC
+        const gateways = await query(
+          'SELECT impianto_id FROM gateways WHERE mac_address = ?',
+          [data.mac]
+        ) as any[];
+
+        if (gateways && gateways.length > 0 && gateways[0].impianto_id) {
+          // Salva nello storico e invia notifica push
+          notificationService.sendAndSave({
+            impiantoId: gateways[0].impianto_id,
+            type: 'gateway_offline',
+            title: '⚠️ Gateway Offline',
+            body: 'Il gateway OmniaPi non è raggiungibile',
+            data: { mac: data.mac, timestamp: new Date().toISOString() }
+          }).catch(err => console.error('Error sending offline notification:', err));
+        } else {
+          // Fallback: broadcast senza storico se gateway non associato
+          notificationService.sendBroadcast({
+            title: '⚠️ Gateway Offline',
+            body: 'Il gateway OmniaPi non è raggiungibile',
+            data: { type: 'gateway_offline', mac: data.mac, timestamp: new Date().toISOString() }
+          }).catch(err => console.error('Error sending offline notification:', err));
+        }
       }
       return;
     }

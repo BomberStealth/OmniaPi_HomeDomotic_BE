@@ -5,6 +5,7 @@ import { reloadSchedule, getScheduleStats } from '../services/sceneScheduler';
 import { canControlDeviceById, canControlDeviceByTopic } from '../services/deviceGuard';
 import { omniapiCommand } from '../config/mqtt';
 import { getSunTimesForImpianto, getUpcomingSunTimes, formatTime } from '../services/sunCalculator';
+import * as notificationService from '../services/notificationService';
 
 // ============================================
 // SCENE CONTROLLER
@@ -321,6 +322,23 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
     const message = azioniBloccate > 0
       ? `Scena eseguita (${azioniBloccate} dispositiv${azioniBloccate === 1 ? 'o' : 'i'} bloccat${azioniBloccate === 1 ? 'o' : 'i'})`
       : 'Scena eseguita con successo';
+
+    // Invia notifica push per esecuzione scena
+    if (azioniEseguite > 0) {
+      notificationService.sendAndSave({
+        impiantoId: scena.impianto_id,
+        userId: req.user!.userId,
+        type: 'scene_executed',
+        title: `🎬 Scena "${scena.nome}" eseguita`,
+        body: `${azioniEseguite} azione${azioniEseguite > 1 ? 'i' : ''} eseguita${azioniEseguite > 1 ? 'e' : ''}`,
+        data: {
+          sceneId: scena.id,
+          sceneName: scena.nome,
+          actionsExecuted: azioniEseguite,
+          actionsBlocked: azioniBloccate
+        }
+      }).catch(err => console.error('Error sending scene notification:', err));
+    }
 
     res.json({ message, azioni: azioniEseguite, bloccati: azioniBloccate });
   } catch (error) {

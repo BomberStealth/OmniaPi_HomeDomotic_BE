@@ -94,3 +94,25 @@ export const emitOmniapiNodesUpdate = (nodes: OmniapiNode[]) => {
     console.log(`📡 WS: omniapi-nodes-update emitted (${nodes.length} nodes)`);
   }
 };
+
+// ============================================
+// NOTIFICATION WEBSOCKET EVENTS
+// ============================================
+
+export interface NotificationEvent {
+  id: number;
+  impiantoId: number;
+  type: string;
+  title: string;
+  body: string;
+  data?: any;
+  created_at: string;
+}
+
+export const emitNotification = (impiantoId: number, notification: NotificationEvent) => {
+  if (ioInstance) {
+    // Emit to specific impianto room
+    ioInstance.to(`impianto-${impiantoId}`).emit('notification', notification);
+    console.log(`🔔 WS: notification emitted to impianto-${impiantoId}: ${notification.title}`);
+  }
+};

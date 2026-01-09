@@ -16,7 +16,8 @@ import * as omniapiController from '../controllers/omniapiController';
 import * as gatewayController from '../controllers/gatewayController';
 import * as notificationController from '../controllers/notificationController';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
-import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
+// RATE LIMITING DISABILITATO - causava blocchi ingiustificati
+// import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
 import { validate, loginSchema, registerSchema } from '../middleware/validation';
 import { UserRole } from '../types';
 
@@ -27,11 +28,11 @@ import { UserRole } from '../types';
 const router = Router();
 
 // ============================================
-// AUTH ROUTES (con sicurezza avanzata)
+// AUTH ROUTES (sicurezza: rate limiting disabilitato)
 // ============================================
-router.post('/auth/login', loginLimiter, validate(loginSchema), authController.login);
-// Registrazione pubblica (auto-registrazione clienti) - protetta da rate limiting
-router.post('/auth/register', registerLimiter, validate(registerSchema), authController.register);
+router.post('/auth/login', validate(loginSchema), authController.login);
+// Registrazione pubblica (auto-registrazione clienti)
+router.post('/auth/register', validate(registerSchema), authController.register);
 router.get('/auth/profile', authMiddleware, authController.getProfile);
 router.post('/auth/change-password', authMiddleware, authController.changePassword);
 router.post('/auth/logout', authMiddleware, authController.logout);
@@ -216,5 +217,8 @@ router.post('/admin/cleanup-scenes', authMiddleware, roleMiddleware(UserRole.ADM
 router.post('/notifications/register', authMiddleware, notificationController.registerToken);
 router.delete('/notifications/unregister', authMiddleware, notificationController.unregisterToken);
 router.post('/notifications/test', authMiddleware, notificationController.sendTestNotification);
+router.get('/notifications/history', authMiddleware, notificationController.getHistory);
+router.post('/notifications/:id/read', authMiddleware, notificationController.markAsRead);
+router.post('/notifications/read-all', authMiddleware, notificationController.markAllAsRead);
 
 export default router;
