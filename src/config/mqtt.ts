@@ -291,42 +291,38 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
 /**
  * Sincronizza la lista nodi al database (update stato online/offline)
+ * REAL-TIME: usa SOLO il campo online riportato dal gateway
  */
 const syncNodesToDatabase = async (nodes: any[]) => {
   try {
-    const macs = nodes.map(n => n.mac);
-
-    // Segna tutti i nodi registrati come offline prima
-    await query(
-      `UPDATE dispositivi SET stato = 'offline'
-       WHERE device_type = 'omniapi_node'
-       AND mac_address NOT IN (?)`,
-      [macs.length > 0 ? macs : ['']]
-    );
-
-    // Aggiorna ogni nodo online
+    // Aggiorna ogni nodo in base al suo stato online riportato dal gateway
     for (const node of nodes) {
+      const isOnline = node.online === true || node.online === 1;
       await query(
         `UPDATE dispositivi SET
-          stato = 'online',
+          stato = ?,
           omniapi_info = JSON_SET(
             COALESCE(omniapi_info, '{}'),
             '$.rssi', ?,
             '$.version', ?,
             '$.relay1', ?,
-            '$.relay2', ?
+            '$.relay2', ?,
+            '$.online', ?
           ),
           aggiornato_il = NOW()
          WHERE mac_address = ? AND device_type = 'omniapi_node'`,
         [
+          isOnline ? 'online' : 'offline',
           node.rssi || 0,
           node.version || 'unknown',
           node.relay1 ? true : false,
           node.relay2 ? true : false,
+          isOnline,
           node.mac
         ]
       );
     }
+    console.log(`📡 Synced ${nodes.length} nodes to DB (real-time status)`);
   } catch (error) {
     console.error('Errore sync nodi DB:', error);
   }

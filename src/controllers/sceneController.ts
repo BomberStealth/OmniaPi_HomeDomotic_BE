@@ -6,6 +6,7 @@ import { canControlDeviceById, canControlDeviceByTopic } from '../services/devic
 import { omniapiCommand } from '../config/mqtt';
 import { getSunTimesForImpianto, getUpcomingSunTimes, formatTime } from '../services/sunCalculator';
 import * as notificationService from '../services/notificationService';
+import { emitScenaUpdate } from '../socket';
 
 // ============================================
 // SCENE CONTROLLER
@@ -82,6 +83,9 @@ export const createScena = async (req: AuthRequest, res: Response) => {
       await reloadSchedule(result.insertId);
     }
 
+    // Emit WebSocket event
+    emitScenaUpdate(parseInt(impiantoId as string), scena[0], 'created');
+
     res.status(201).json(scena[0]);
   } catch (error) {
     console.error('Errore create scena:', error);
@@ -130,6 +134,9 @@ export const updateScena = async (req: AuthRequest, res: Response) => {
 
     const scenaAggiornata: any = await query('SELECT * FROM scene WHERE id = ?', [id]);
 
+    // Emit WebSocket event
+    emitScenaUpdate(scenaAggiornata[0].impianto_id, scenaAggiornata[0], 'updated');
+
     res.json(scenaAggiornata[0]);
   } catch (error) {
     console.error('Errore update scena:', error);
@@ -160,7 +167,11 @@ export const deleteScena = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Non puoi eliminare le scene base' });
     }
 
+    const scenaToDelete = scene[0];
     await query('DELETE FROM scene WHERE id = ?', [id]);
+
+    // Emit WebSocket event
+    emitScenaUpdate(scenaToDelete.impianto_id, { id: parseInt(id as string), ...scenaToDelete }, 'deleted');
 
     res.json({ message: 'Scena eliminata con successo' });
   } catch (error) {
@@ -338,6 +349,9 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
           actionsBlocked: azioniBloccate
         }
       }).catch(err => console.error('Error sending scene notification:', err));
+
+      // Emit WebSocket event for scene execution
+      emitScenaUpdate(scena.impianto_id, { ...scena, lastExecuted: new Date().toISOString() }, 'executed');
     }
 
     res.json({ message, azioni: azioniEseguite, bloccati: azioniBloccate });

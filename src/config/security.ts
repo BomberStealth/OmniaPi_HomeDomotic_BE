@@ -39,12 +39,24 @@ validateEnvVariables();
 // ============================================
 const getAllowedOrigins = (): string[] => {
   const defaultOrigins = [
+    // HTTP origins (dev)
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:5173',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
     'http://127.0.0.1:5173',
+    // HTTPS origins (Nginx proxy)
+    'https://localhost',
+    'https://localhost:5173',
+    'https://localhost:3000',
+    'https://127.0.0.1',
+    'https://127.0.0.1:5173',
+    'https://127.0.0.1:3000',
+    'https://192.168.1.253',
+    'https://192.168.1.253:5173',
+    'https://192.168.1.253:3000',
+    'https://ofwd.asuscomm.com',
   ];
 
   // Aggiungi origini da env se presenti

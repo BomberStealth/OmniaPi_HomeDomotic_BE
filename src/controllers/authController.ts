@@ -66,6 +66,12 @@ export const login = async (req: Request, res: Response) => {
   const startTime = Date.now();
   const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
 
+  // DEBUG LOGS
+  console.log('📥 LOGIN REQUEST RECEIVED');
+  console.log('📥 Body:', { email: req.body?.email, password: '***' });
+  console.log('📥 Headers:', { host: req.headers.host, origin: req.headers.origin, 'x-forwarded-for': req.headers['x-forwarded-for'] });
+  console.log('📥 Client IP:', clientIp);
+
   try {
     const { email, password } = req.body;
     const normalizedEmail = email.toLowerCase().trim();

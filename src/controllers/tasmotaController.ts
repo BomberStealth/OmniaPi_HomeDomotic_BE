@@ -4,6 +4,7 @@ import { AuthRequest } from '../middleware/auth';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { canControlDeviceById } from '../services/deviceGuard';
+import { emitDispositivoUpdate } from '../socket';
 
 // @ts-ignore - evilscan non ha types
 import Evilscan from 'evilscan';
@@ -236,6 +237,9 @@ export const addDispositivo = async (req: AuthRequest, res: Response) => {
 
       const [dispositivo]: any = await query('SELECT * FROM dispositivi WHERE id = ?', [result.insertId]);
 
+      // Emit WebSocket event
+      emitDispositivoUpdate(parseInt(impiantoId as string), dispositivo[0], 'created');
+
       res.status(201).json(dispositivo[0]);
     } catch (insertError: any) {
       if (insertError.code === 'ER_DUP_ENTRY') {
@@ -318,6 +322,9 @@ export const deleteDispositivo = async (req: AuthRequest, res: Response) => {
 
     console.log(`🗑️ Dispositivo ${dispositivo.nome} (ID: ${deviceId}) eliminato. Scene aggiornate: ${sceneAggiornate}`);
 
+    // Emit WebSocket event
+    emitDispositivoUpdate(dispositivo.impianto_id, { id: deviceId, ...dispositivo }, 'deleted');
+
     res.json({
       message: 'Dispositivo rimosso con successo',
       sceneAggiornate
@@ -352,6 +359,12 @@ export const updateStanzaDispositivo = async (req: AuthRequest, res: Response) =
       'UPDATE dispositivi SET stanza_id = ? WHERE id = ?',
       [stanza_id || null, id]
     );
+
+    // Emit WebSocket event
+    emitDispositivoUpdate(dispositivi[0].impianto_id, {
+      ...dispositivi[0],
+      stanza_id: stanza_id || null
+    }, 'updated');
 
     res.json({
       success: true,
@@ -437,6 +450,13 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
         'UPDATE dispositivi SET power_state = ?, stato = ? WHERE id = ?',
         [tasmotaPowerState, 'online', id]
       );
+
+      // Emit WebSocket event for state change
+      emitDispositivoUpdate(dispositivo.impianto_id, {
+        ...dispositivo,
+        power_state: tasmotaPowerState,
+        stato: 'online'
+      }, 'state-changed');
 
       res.json({
         message: 'Comando inviato con successo',
@@ -555,6 +575,12 @@ export const renameDispositivo = async (req: AuthRequest, res: Response) => {
       'UPDATE dispositivi SET nome = ? WHERE id = ?',
       [nome.trim(), id]
     );
+
+    // Emit WebSocket event
+    emitDispositivoUpdate(dispositivi[0].impianto_id, {
+      ...dispositivi[0],
+      nome: nome.trim()
+    }, 'updated');
 
     res.json({
       success: true,

@@ -73,11 +73,13 @@ export const updateNodesFromList = (nodes: Array<{
   version?: string;
   relays?: [number, number];
 }>) => {
+  // REAL-TIME: aggiorna SOLO i nodi ricevuti, usa il campo online dal gateway
   nodes.forEach(node => {
     const existing = nodesState.get(node.mac);
+    const isOnline = node.online === true || (node.online as any) === 1;
     nodesState.set(node.mac, {
       mac: node.mac,
-      online: node.online ?? existing?.online ?? false,
+      online: isOnline,  // Usa SOLO il valore dal gateway
       rssi: node.rssi ?? existing?.rssi ?? 0,
       version: node.version ?? existing?.version ?? '',
       relay1: node.relays ? node.relays[0] === 1 : existing?.relay1 ?? false,
@@ -85,7 +87,7 @@ export const updateNodesFromList = (nodes: Array<{
       lastSeen: new Date()
     });
   });
-  console.log(`📡 OmniaPi Nodes updated: ${nodesState.size} nodes`);
+  console.log(`📡 OmniaPi Nodes updated: ${nodesState.size} nodes (real-time)`);
 };
 
 export const updateNodeState = (mac: string, data: {

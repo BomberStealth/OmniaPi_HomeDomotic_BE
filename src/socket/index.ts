@@ -65,9 +65,40 @@ export const initializeSocket = (httpServer: HTTPServer) => {
   return io;
 };
 
-// Funzione helper per inviare aggiornamenti dispositivo
-export const emitDispositivoUpdate = (io: SocketServer, impiantoId: number, dispositivo: any) => {
-  io.to(`impianto-${impiantoId}`).emit('dispositivo-update', dispositivo);
+// ============================================
+// STANZE, SCENE, DISPOSITIVI WEBSOCKET EVENTS
+// ============================================
+
+// Emit quando una stanza viene creata/modificata/eliminata
+export const emitStanzaUpdate = (impiantoId: number, stanza: any, action: 'created' | 'updated' | 'deleted') => {
+  if (ioInstance) {
+    ioInstance.to(`impianto-${impiantoId}`).emit('stanza-update', { stanza, action });
+    console.log(`🏠 WS: stanza-update [${action}] emitted to impianto-${impiantoId}`);
+  }
+};
+
+// Emit quando una scena viene creata/modificata/eliminata/eseguita
+export const emitScenaUpdate = (impiantoId: number, scena: any, action: 'created' | 'updated' | 'deleted' | 'executed') => {
+  if (ioInstance) {
+    ioInstance.to(`impianto-${impiantoId}`).emit('scena-update', { scena, action });
+    console.log(`🎬 WS: scena-update [${action}] emitted to impianto-${impiantoId}`);
+  }
+};
+
+// Emit quando un dispositivo Tasmota/generico viene aggiornato
+export const emitDispositivoUpdate = (impiantoId: number, dispositivo: any, action: 'created' | 'updated' | 'deleted' | 'state-changed') => {
+  if (ioInstance) {
+    ioInstance.to(`impianto-${impiantoId}`).emit('dispositivo-update', { dispositivo, action });
+    console.log(`💡 WS: dispositivo-update [${action}] emitted to impianto-${impiantoId}`);
+  }
+};
+
+// Emit per refresh completo di tutti i dati (utile dopo riconnessione)
+export const emitFullSync = (impiantoId: number, data: { stanze?: any[], scene?: any[], dispositivi?: any[] }) => {
+  if (ioInstance) {
+    ioInstance.to(`impianto-${impiantoId}`).emit('full-sync', data);
+    console.log(`🔄 WS: full-sync emitted to impianto-${impiantoId}`);
+  }
 };
 
 // ============================================

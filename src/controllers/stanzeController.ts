@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
+import { emitStanzaUpdate } from '../socket';
 
 // ============================================
 // STANZE CONTROLLER
@@ -81,6 +82,9 @@ export const createStanza = async (req: AuthRequest, res: Response) => {
 
     const stanza: any = await query('SELECT * FROM stanze WHERE id = ?', [result.insertId]);
 
+    // Emit WebSocket event
+    emitStanzaUpdate(parseInt(impiantoId as string), stanza[0], 'created');
+
     res.status(201).json(stanza[0]);
   } catch (error) {
     console.error('Errore create stanza:', error);
@@ -113,6 +117,9 @@ export const updateStanza = async (req: AuthRequest, res: Response) => {
     );
 
     const stanzaAggiornata: any = await query('SELECT * FROM stanze WHERE id = ?', [id]);
+
+    // Emit WebSocket event
+    emitStanzaUpdate(stanzaAggiornata[0].impianto_id, stanzaAggiornata[0], 'updated');
 
     res.json(stanzaAggiornata[0]);
   } catch (error) {
@@ -183,6 +190,9 @@ export const deleteStanza = async (req: AuthRequest, res: Response) => {
 
     // 4. Elimina la stanza
     await query('DELETE FROM stanze WHERE id = ?', [id]);
+
+    // Emit WebSocket event
+    emitStanzaUpdate(stanza.impianto_id, { id: parseInt(id as string), ...stanza }, 'deleted');
 
     res.json({
       message: 'Stanza eliminata con successo',
