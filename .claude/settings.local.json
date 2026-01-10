@@ -119,7 +119,11 @@
       "Bash(cmd //c \"taskkill /F /PID 10276\")",
       "Bash(cmd //c \"cd C:\\Users\\edoar\\Desktop\\Omnia_HomeDomotic\\OmniaPi_HomeDomotic_Firmware\\gateway && C:\\Espressif\\idf_cmd_init.bat && idf.py build\")",
       "Bash(cmd //c \"set IDF_PATH=C:\\Espressif\\frameworks\\esp-idf-v5.5.2 && C:\\Espressif\\frameworks\\esp-idf-v5.5.2\\export.bat && cd C:\\Users\\edoar\\Desktop\\Omnia_HomeDomotic\\OmniaPi_HomeDomotic_Firmware\\gateway && idf.py build\")",
-      "Bash(C:/Espressif/python_env/idf5.5_py3.14_env/Scripts/python.exe:*)"
+      "Bash(C:/Espressif/python_env/idf5.5_py3.14_env/Scripts/python.exe:*)",
+      "Bash(netsh wlan show interfaces:*)",
+      "Bash(C:/Espressif/frameworks/esp-idf-v5.5.2/tools/idf.py build:*)",
+      "Bash(set IDF_PATH=C:/Espressif/frameworks/esp-idf-v5.5.2:*)",
+      "Bash(cmd //c \"taskkill /F /PID 38448\")"
     ]
   }
 }

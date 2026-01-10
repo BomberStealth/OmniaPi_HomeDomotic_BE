@@ -79,6 +79,12 @@ export const corsConfig = {
       return callback(null, true);
     }
 
+    // Permetti tutti gli IP della rete locale (192.168.x.x)
+    const localNetworkPattern = /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/;
+    if (localNetworkPattern.test(origin)) {
+      return callback(null, true);
+    }
+
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {

@@ -244,6 +244,10 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
     // omniapi/gateway/nodes
     if (topic === 'omniapi/gateway/nodes') {
       if (data.nodes && Array.isArray(data.nodes)) {
+        console.log(`📡 [DEBUG] Nodes list received: ${data.nodes.length} nodes`);
+        data.nodes.forEach((n: any) => {
+          console.log(`   - ${n.mac}: relay1=${n.relay1}, relay2=${n.relay2}, online=${n.online}`);
+        });
         updateNodesFromList(data.nodes);
         emitOmniapiNodesUpdate(getAllNodes());
         // Sync nodi al database
@@ -261,6 +265,9 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       const parseRelay = (val: any) => val === 1 || val === true || val === 'on' || val === 'ON';
       const relay1 = parseRelay(data.relay1);
       const relay2 = parseRelay(data.relay2);
+
+      console.log(`📡 [DEBUG] Node state received: MAC=${mac}, raw={relay1:${data.relay1}, relay2:${data.relay2}}, parsed={relay1:${relay1}, relay2:${relay2}}`);
+
       const nodeUpdate = updateNodeState(mac, {
         relay1,
         relay2,
@@ -268,6 +275,7 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
         rssi: data.rssi
       });
       if (nodeUpdate) {
+        console.log(`📡 [DEBUG] Emitting node update:`, JSON.stringify(nodeUpdate));
         emitOmniapiNodeUpdate(nodeUpdate);
         // Sync stato al database
         await syncNodeStateToDatabase(mac, {
@@ -276,6 +284,8 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
           rssi: data.rssi,
           online: data.online ?? true
         });
+      } else {
+        console.log(`⚠️ [DEBUG] Node update returned null for MAC=${mac}`);
       }
       return;
     }
@@ -375,6 +385,7 @@ export const omniapiCommand = (nodeMac: string, channel: number, action: 'on' | 
     channel,
     action
   });
+  console.log(`📡 [DEBUG] Sending MQTT command: topic=omniapi/gateway/command, payload=${payload}`);
   client.publish('omniapi/gateway/command', payload);
   console.log(`📡 OmniaPi command sent: ${nodeMac} ch${channel} ${action}`);
 };

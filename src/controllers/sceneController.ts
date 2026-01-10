@@ -6,7 +6,8 @@ import { canControlDeviceById, canControlDeviceByTopic } from '../services/devic
 import { omniapiCommand } from '../config/mqtt';
 import { getSunTimesForImpianto, getUpcomingSunTimes, formatTime } from '../services/sunCalculator';
 import * as notificationService from '../services/notificationService';
-import { emitScenaUpdate } from '../socket';
+import { emitScenaUpdate, emitDispositivoUpdate, emitOmniapiNodeUpdate } from '../socket';
+import { getNode } from '../services/omniapiState';
 
 // ============================================
 // SCENE CONTROLLER
@@ -295,6 +296,16 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
           omniapiCommand(device.mac_address, 1, action);
           console.log(`📡 Scene OmniaPi: ${device.mac_address} ch1 ${action}`);
           await query('UPDATE dispositivi SET power_state = ? WHERE id = ?', [newPowerState, deviceId]);
+
+          // Emit WebSocket update per OmniaPi node
+          const liveNode = getNode(device.mac_address);
+          if (liveNode) {
+            emitOmniapiNodeUpdate({
+              ...liveNode,
+              relay1: newPowerState,
+            });
+          }
+
           azioniEseguite++;
           continue;
         }
@@ -316,6 +327,11 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
             'UPDATE dispositivi SET power_state = ? WHERE id = ?',
             [newPowerState, deviceId]
           );
+          // Emit WebSocket update per Tasmota
+          emitDispositivoUpdate(scena.impianto_id, {
+            id: deviceId,
+            power_state: newPowerState,
+          }, 'state-changed');
         } else {
           await query(
             'UPDATE dispositivi SET power_state = ? WHERE topic_mqtt = ?',
