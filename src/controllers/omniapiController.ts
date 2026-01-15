@@ -140,6 +140,52 @@ export const triggerDiscovery = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * POST /api/omniapi/nodes/:mac/test
+ * Test dispositivo - fa toggle 3 volte per identificarlo fisicamente
+ */
+export const testNode = async (req: AuthRequest, res: Response) => {
+  try {
+    const { mac } = req.params;
+
+    if (!mac) {
+      return res.status(400).json({ error: 'MAC address richiesto' });
+    }
+
+    // Verifica che il nodo esista
+    const node = getNode(mac);
+    if (!node) {
+      return res.status(404).json({ error: 'Nodo non trovato' });
+    }
+
+    if (!node.online) {
+      return res.status(503).json({ error: 'Nodo offline' });
+    }
+
+    // Funzione helper per sleep
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Esegui 3 toggle con delay (asincrono, non blocca la response)
+    (async () => {
+      for (let i = 0; i < 3; i++) {
+        omniapiCommand(mac, 1, 'on');
+        await sleep(400);
+        omniapiCommand(mac, 1, 'off');
+        await sleep(400);
+      }
+      console.log(`🔦 Test completato per nodo ${mac}`);
+    })();
+
+    res.json({
+      success: true,
+      message: `Test avviato per ${mac} - toggle 3 volte`
+    });
+  } catch (error) {
+    console.error('Errore testNode:', error);
+    res.status(500).json({ error: 'Errore durante il test del nodo' });
+  }
+};
+
 // ============================================
 // REGISTRAZIONE NODI NEL DATABASE
 // ============================================

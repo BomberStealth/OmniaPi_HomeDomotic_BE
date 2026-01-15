@@ -342,7 +342,7 @@ export const updateStanzaDispositivo = async (req: AuthRequest, res: Response) =
     const { stanza_id } = req.body;
 
     // Verifica che il dispositivo esista e che l'utente abbia accesso
-    const [dispositivi]: any = await query(
+    const rows: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
        LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
@@ -350,8 +350,21 @@ export const updateStanzaDispositivo = async (req: AuthRequest, res: Response) =
       [id, req.user!.userId, req.user!.userId]
     );
 
-    if (dispositivi.length === 0) {
+    const dispositivo = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    if (!dispositivo) {
       return res.status(404).json({ error: 'Dispositivo non trovato' });
+    }
+
+    // Se stanza_id è fornito, verifica che appartenga allo stesso impianto
+    if (stanza_id) {
+      const stanze: any = await query(
+        'SELECT id FROM stanze WHERE id = ? AND impianto_id = ?',
+        [stanza_id, dispositivo.impianto_id]
+      );
+      const stanzaExists = Array.isArray(stanze) && stanze.length > 0;
+      if (!stanzaExists) {
+        return res.status(400).json({ error: 'Stanza non valida per questo impianto' });
+      }
     }
 
     // Aggiorna stanza
@@ -361,8 +374,8 @@ export const updateStanzaDispositivo = async (req: AuthRequest, res: Response) =
     );
 
     // Emit WebSocket event
-    emitDispositivoUpdate(dispositivi[0].impianto_id, {
-      ...dispositivi[0],
+    emitDispositivoUpdate(dispositivo.impianto_id, {
+      ...dispositivo,
       stanza_id: stanza_id || null
     }, 'updated');
 

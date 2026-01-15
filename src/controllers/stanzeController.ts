@@ -65,6 +65,15 @@ export const createStanza = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Impianto non trovato' });
     }
 
+    // Validazione nome duplicato
+    const esistente: any = await query(
+      'SELECT id FROM stanze WHERE LOWER(nome) = LOWER(?) AND impianto_id = ?',
+      [nome.trim(), impiantoId]
+    );
+    if (esistente && esistente.length > 0) {
+      return res.status(400).json({ error: 'Esiste già una stanza con questo nome' });
+    }
+
     // Ottieni l'ordine massimo corrente
     const maxOrdineResult: any = await query(
       'SELECT MAX(ordine) as max_ordine FROM stanze WHERE impianto_id = ?',
@@ -109,6 +118,17 @@ export const updateStanza = async (req: AuthRequest, res: Response) => {
 
     if (!stanze || stanze.length === 0) {
       return res.status(404).json({ error: 'Stanza non trovata' });
+    }
+
+    // Validazione nome duplicato (escludendo la stanza corrente)
+    if (nome) {
+      const esistente: any = await query(
+        'SELECT id FROM stanze WHERE LOWER(nome) = LOWER(?) AND impianto_id = ? AND id != ?',
+        [nome.trim(), stanze[0].impianto_id, id]
+      );
+      if (esistente && esistente.length > 0) {
+        return res.status(400).json({ error: 'Esiste già una stanza con questo nome' });
+      }
     }
 
     await query(

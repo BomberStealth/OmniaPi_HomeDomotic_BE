@@ -28,6 +28,13 @@ import { UserRole } from '../types';
 const router = Router();
 
 // ============================================
+// VERSION ENDPOINT (per auto-update frontend)
+// ============================================
+router.get('/version', (req, res) => {
+  res.json({ version: 'v1.3.22' });
+});
+
+// ============================================
 // AUTH ROUTES (sicurezza: rate limiting disabilitato)
 // ============================================
 router.post('/auth/login', validate(loginSchema), authController.login);
@@ -191,6 +198,7 @@ router.get('/omniapi/nodes', omniapiController.getNodes);
 router.get('/omniapi/nodes/:mac', omniapiController.getNodeByMac);
 router.post('/omniapi/command', omniapiController.sendCommand);
 router.post('/omniapi/discover', omniapiController.triggerDiscovery);
+router.post('/omniapi/nodes/:mac/test', authMiddleware, omniapiController.testNode);
 
 // Gestione nodi registrati (DB) - richiede autenticazione
 router.get('/impianti/:impiantoId/omniapi/nodes', authMiddleware, omniapiController.getRegisteredNodes);

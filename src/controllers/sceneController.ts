@@ -351,10 +351,12 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
       : 'Scena eseguita con successo';
 
     // Invia notifica push per esecuzione scena
+    // excludeUserId: chi ha eseguito la scena NON riceve la notifica (sa già cosa ha fatto)
     if (azioniEseguite > 0) {
       notificationService.sendAndSave({
         impiantoId: scena.impianto_id,
         userId: req.user!.userId,
+        excludeUserId: req.user!.userId, // Non notificare chi ha eseguito l'azione
         type: 'scene_executed',
         title: `🎬 Scena "${scena.nome}" eseguita`,
         body: `${azioniEseguite} azione${azioniEseguite > 1 ? 'i' : ''} eseguita${azioniEseguite > 1 ? 'e' : ''}`,

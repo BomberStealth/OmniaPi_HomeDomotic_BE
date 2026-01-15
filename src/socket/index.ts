@@ -140,10 +140,26 @@ export interface NotificationEvent {
   created_at: string;
 }
 
-export const emitNotification = (impiantoId: number, notification: NotificationEvent) => {
+export const emitNotification = (impiantoId: number, notification: NotificationEvent, excludeUserId?: number) => {
   if (ioInstance) {
-    // Emit to specific impianto room
-    ioInstance.to(`impianto-${impiantoId}`).emit('notification', notification);
-    console.log(`🔔 WS: notification emitted to impianto-${impiantoId}: ${notification.title}`);
+    const room = `impianto-${impiantoId}`;
+
+    if (excludeUserId) {
+      // Emit a tutti nella room TRANNE l'utente che ha fatto l'azione
+      const socketsInRoom = ioInstance.sockets.adapter.rooms.get(room);
+      if (socketsInRoom) {
+        socketsInRoom.forEach(socketId => {
+          const socket = ioInstance!.sockets.sockets.get(socketId);
+          if (socket && socket.data.user?.userId !== excludeUserId) {
+            socket.emit('notification', notification);
+          }
+        });
+        console.log(`🔔 WS: notification emitted to impianto-${impiantoId} (excluded user ${excludeUserId}): ${notification.title}`);
+      }
+    } else {
+      // Emit a tutti nella room
+      ioInstance.to(room).emit('notification', notification);
+      console.log(`🔔 WS: notification emitted to impianto-${impiantoId}: ${notification.title}`);
+    }
   }
 };

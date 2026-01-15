@@ -123,7 +123,16 @@
       "Bash(netsh wlan show interfaces:*)",
       "Bash(C:/Espressif/frameworks/esp-idf-v5.5.2/tools/idf.py build:*)",
       "Bash(set IDF_PATH=C:/Espressif/frameworks/esp-idf-v5.5.2:*)",
-      "Bash(cmd //c \"taskkill /F /PID 38448\")"
+      "Bash(cmd //c \"taskkill /F /PID 38448\")",
+      "Bash(nc:*)",
+      "Bash(service mosquitto status:*)",
+      "Bash(timeout 30 pm2 logs:*)",
+      "Bash(pm2 show:*)",
+      "Bash(ss:*)",
+      "Bash(stat:*)",
+      "Bash(pm2 describe:*)",
+      "Bash(sudo systemctl:*)",
+      "Bash(git -C /home/omniapi/Desktop/OmniaPi_HomeDomestic/OmniaPi_HomeDomotic_Firmware status --short)"
     ]
   }
 }

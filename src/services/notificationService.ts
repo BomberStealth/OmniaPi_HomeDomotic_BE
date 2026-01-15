@@ -27,6 +27,7 @@ interface NotificationPayload {
 interface NotificationHistoryEntry {
   impiantoId: number;
   userId?: number;
+  excludeUserId?: number; // Non inviare push a questo utente (chi ha fatto l'azione)
   type: 'gateway_offline' | 'gateway_online' | 'device_offline' | 'device_online' | 'scene_executed' | 'relay_changed' | 'system';
   title: string;
   body: string;
@@ -109,13 +110,17 @@ export async function sendToUser(userId: number, notification: NotificationPaylo
 /**
  * Invia notifica a tutti gli utenti di un impianto
  * Include: proprietario (cliente_id), utente_id, e utenti con accesso condiviso
+ * @param excludeUserId - ID utente da escludere (es. chi ha eseguito l'azione)
  */
-export async function sendToImpianto(impiantoId: number, notification: NotificationPayload): Promise<number> {
+export async function sendToImpianto(impiantoId: number, notification: NotificationPayload, excludeUserId?: number): Promise<number> {
   try {
     // Query che trova tutti gli utenti con accesso all'impianto:
     // 1. Proprietario (cliente_id)
     // 2. Utente associato (utente_id)
     // 3. Utenti con accesso condiviso (impianti_condivisi)
+    // Esclude l'utente che ha fatto l'azione (se specificato)
+    const excludeClause = excludeUserId ? `AND ft.user_id != ${excludeUserId}` : '';
+
     const tokens = await query(
       `SELECT DISTINCT ft.token
        FROM fcm_tokens ft
@@ -128,16 +133,17 @@ export async function sendToImpianto(impiantoId: number, notification: Notificat
          UNION
          -- Utenti con accesso condiviso
          SELECT utente_id FROM impianti_condivisi WHERE impianto_id = ?
-       )`,
+       ) ${excludeClause}`,
       [impiantoId, impiantoId, impiantoId]
     ) as FcmToken[];
 
     if (tokens.length === 0) {
-      console.log(`No FCM tokens found for impianto ${impiantoId}`);
+      console.log(`No FCM tokens found for impianto ${impiantoId}${excludeUserId ? ` (excluded user ${excludeUserId})` : ''}`);
       return 0;
     }
 
     const tokenList = tokens.map(t => t.token);
+    console.log(`📬 Sending notification to ${tokenList.length} devices${excludeUserId ? ` (excluded user ${excludeUserId})` : ''}`);
     return await sendToTokens(tokenList, notification);
   } catch (error) {
     console.error('❌ Error sending notification to impianto:', error);
@@ -268,6 +274,8 @@ export async function sendBroadcast(notification: NotificationPayload): Promise<
 
 /**
  * Salva una notifica nello storico e invia push
+ * Se excludeUserId è specificato, l'utente NON riceverà la push notification
+ * (utile per non notificare chi ha eseguito l'azione)
  */
 export async function sendAndSave(entry: NotificationHistoryEntry): Promise<number> {
   try {
@@ -278,9 +286,9 @@ export async function sendAndSave(entry: NotificationHistoryEntry): Promise<numb
       [entry.impiantoId, entry.userId || null, entry.type, entry.title, entry.body, JSON.stringify(entry.data || {})]
     ) as ResultSetHeader;
 
-    console.log(`✅ Notification saved to history: ${entry.title}`);
+    console.log(`✅ Notification saved to history: ${entry.title}${entry.excludeUserId ? ` (excluding user ${entry.excludeUserId})` : ''}`);
 
-    // Emit via WebSocket per aggiornamento real-time
+    // Emit via WebSocket per aggiornamento real-time (esclude chi ha fatto l'azione)
     emitNotification(entry.impiantoId, {
       id: result.insertId,
       impiantoId: entry.impiantoId,
@@ -289,9 +297,9 @@ export async function sendAndSave(entry: NotificationHistoryEntry): Promise<numb
       body: entry.body,
       data: entry.data,
       created_at: new Date().toISOString()
-    });
+    }, entry.excludeUserId);
 
-    // Invia push a tutti gli utenti dell'impianto
+    // Invia push a tutti gli utenti dell'impianto (escludendo chi ha fatto l'azione)
     const sent = await sendToImpianto(entry.impiantoId, {
       title: entry.title,
       body: entry.body,
@@ -300,7 +308,7 @@ export async function sendAndSave(entry: NotificationHistoryEntry): Promise<numb
         notificationId: result.insertId.toString(),
         ...Object.fromEntries(Object.entries(entry.data || {}).map(([k, v]) => [k, String(v)]))
       }
-    });
+    }, entry.excludeUserId);
 
     return sent;
   } catch (error) {
