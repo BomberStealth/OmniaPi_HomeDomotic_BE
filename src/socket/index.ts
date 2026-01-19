@@ -3,7 +3,7 @@ import { Server as HTTPServer } from 'http';
 import jwt from 'jsonwebtoken';
 import { jwtConfig } from '../config/jwt';
 import { JWTPayload } from '../types';
-import { OmniapiNode } from '../services/omniapiState';
+import { OmniapiNode, LedDevice } from '../services/omniapiState';
 
 // ============================================
 // WEBSOCKET SERVER
@@ -124,6 +124,97 @@ export const emitOmniapiNodesUpdate = (nodes: OmniapiNode[]) => {
     ioInstance.emit('omniapi-nodes-update', nodes);
     console.log(`📡 WS: omniapi-nodes-update emitted (${nodes.length} nodes)`);
   }
+};
+
+export const emitOmniapiLedUpdate = (ledState: LedDevice | any) => {
+  if (ioInstance) {
+    ioInstance.emit('omniapi-led-update', ledState);
+    console.log(`📡 WS: omniapi-led-update emitted for ${ledState.mac}`);
+  }
+};
+
+// ============================================
+// UNIFIED DEVICE UPDATE (NEW - Phase 2)
+// Emits both legacy events AND new unified event
+// ============================================
+
+export interface DeviceUpdatePayload {
+  id?: number;
+  mac: string;
+  deviceType: string;
+  category: 'relay' | 'led' | 'sensor' | 'dimmer' | 'tasmota' | 'unknown';
+  name?: string;
+  stato: 'online' | 'offline' | 'unknown';
+  state: any;
+  timestamp: number;
+}
+
+/**
+ * Unified device update - emits to impianto room
+ * Also emits legacy events for backward compatibility
+ */
+export const emitDeviceUpdate = (impiantoId: number | null, device: DeviceUpdatePayload) => {
+  if (!ioInstance) return;
+
+  // Add timestamp for deduplication
+  const payload = {
+    ...device,
+    timestamp: device.timestamp || Date.now()
+  };
+
+  // Emit unified event to impianto room (or broadcast if no impianto)
+  if (impiantoId) {
+    ioInstance.to(`impianto-${impiantoId}`).emit('device-update', payload);
+    console.log(`📡 WS: device-update emitted to impianto-${impiantoId} for ${device.mac}`);
+  } else {
+    ioInstance.emit('device-update', payload);
+    console.log(`📡 WS: device-update broadcast for ${device.mac}`);
+  }
+
+  // Also emit legacy events for backward compatibility
+  if (device.category === 'relay') {
+    ioInstance.emit('omniapi-node-update', {
+      mac: device.mac,
+      online: device.stato === 'online',
+      relay1: device.state?.channels?.[0] ?? false,
+      relay2: device.state?.channels?.[1] ?? false,
+      rssi: device.state?.rssi,
+      version: device.state?.firmwareVersion,
+      lastSeen: new Date()
+    });
+  } else if (device.category === 'led') {
+    ioInstance.emit('omniapi-led-update', {
+      mac: device.mac,
+      online: device.stato === 'online',
+      power: device.state?.power ?? false,
+      r: device.state?.r ?? 0,
+      g: device.state?.g ?? 255,
+      b: device.state?.b ?? 0,
+      brightness: device.state?.brightness ?? 128,
+      effect: device.state?.effect ?? 0,
+      lastSeen: new Date()
+    });
+  }
+};
+
+/**
+ * Emit device update by MAC - looks up impiantoId from device
+ */
+export const emitDeviceUpdateByMac = async (mac: string, state: any, category: 'relay' | 'led') => {
+  if (!ioInstance) return;
+
+  // For now, broadcast (Phase 6 will add proper room scoping)
+  const payload: DeviceUpdatePayload = {
+    mac,
+    deviceType: category === 'relay' ? 'omniapi_node' : 'omniapi_led',
+    category,
+    stato: state.online !== false ? 'online' : 'offline',
+    state,
+    timestamp: Date.now()
+  };
+
+  // Broadcast for now (legacy behavior)
+  emitDeviceUpdate(null, payload);
 };
 
 // ============================================

@@ -75,7 +75,17 @@ export const registerSchema = Joi.object({
     }),
   ruolo: Joi.string()
     .valid('cliente', 'installatore', 'admin')
-    .optional()
+    .optional(),
+  gdprAccepted: Joi.boolean()
+    .required()
+    .messages({
+      'any.required': 'Devi accettare l\'informativa sulla privacy'
+    }),
+  ageConfirmed: Joi.boolean()
+    .required()
+    .messages({
+      'any.required': 'Devi confermare di avere almeno 16 anni'
+    })
 });
 
 /**

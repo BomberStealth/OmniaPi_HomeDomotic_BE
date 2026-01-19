@@ -46,6 +46,14 @@ app.use(cors(corsConfig));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// DEBUG: Log all POST requests body
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.url.includes('/auth/register')) {
+    console.log('[DEBUG] POST /auth/register - req.body:', JSON.stringify(req.body));
+  }
+  next();
+});
+
 // Security headers for all responses
 app.use((req, res, next) => {
   // Prevent clickjacking

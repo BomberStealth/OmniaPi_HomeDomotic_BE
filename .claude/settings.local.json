@@ -132,7 +132,29 @@
       "Bash(stat:*)",
       "Bash(pm2 describe:*)",
       "Bash(sudo systemctl:*)",
-      "Bash(git -C /home/omniapi/Desktop/OmniaPi_HomeDomestic/OmniaPi_HomeDomotic_Firmware status --short)"
+      "Bash(git -C /home/omniapi/Desktop/OmniaPi_HomeDomestic/OmniaPi_HomeDomotic_Firmware status --short)",
+      "Bash(idf.py fullclean:*)",
+      "Bash(idf.py set-target:*)",
+      "Bash(idf.py:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(systemctl list-units:*)",
+      "Bash(bash:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEyLCJpYXQiOjE3Njg1NTUzNjMsImV4cCI6MTc2ODU1ODk2M30.WDkGT7C5t1gKahNHhHUvzehdYbHZSmqrpa77-KbL2Hg\")",
+      "Bash(sudo sed:*)",
+      "Bash(sudo find:*)",
+      "Bash(dpkg:*)",
+      "Bash(sudo lsof:*)",
+      "Bash(npm run db:query:*)",
+      "Bash(# Spegni la LED curl -s -X POST http://localhost:3000/api/led/command \\\\ -H \"\"Content-Type: application/json\"\" \\\\ -d ''{\"\"mac\"\":\"\"80:65:99:F0:17:9A\"\",\"\"action\"\":\"\"off\"\"}'' echo \"\"\"\" sleep 2 # Verifica stato mosquitto_sub -h localhost -t \"\"omniapi/gateway/nodes\"\" -C 1)",
+      "Bash(stty:*)",
+      "Bash(# Reset the serial port and try again sleep 2 && cd /home/omniapi/Desktop/OmniaPi_HomeDomestic/OmniaPi_HomeDomotic_Firmware/led_strip && source /home/omniapi/esp/esp-idf/export.sh && idf.py -p /dev/ttyACM0 flash 2>&1)",
+      "Bash(/home/omniapi/deploy-frontend.sh:*)",
+      "Bash(./deploy-frontend.sh:*)",
+      "Bash(pm2 env:*)",
+      "Bash(apt list:*)",
+      "Bash(sudo -n rm -rf /var/www/omniapi/*)",
+      "Bash(sudo -S rm:*)"
     ]
   }
 }

@@ -15,6 +15,8 @@ export interface User {
   nome: string;
   cognome: string;
   ruolo: UserRole;
+  token_version?: number;
+  email_verified?: boolean;
   creato_il: Date;
   aggiornato_il: Date;
 }
@@ -23,6 +25,7 @@ export interface JWTPayload {
   userId: number;
   email: string;
   ruolo: UserRole;
+  tokenVersion?: number; // Per invalidare sessioni dopo cambio password
 }
 
 // ============================================

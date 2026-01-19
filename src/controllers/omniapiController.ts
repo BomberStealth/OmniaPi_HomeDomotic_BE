@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
-import { getGatewayState, getAllNodes, getNode } from '../services/omniapiState';
+import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState } from '../services/omniapiState';
 import { omniapiCommand } from '../config/mqtt';
 import { query } from '../config/database';
 
@@ -249,7 +249,7 @@ export const getRegisteredNodes = async (req: AuthRequest, res: Response) => {
 
 /**
  * GET /api/impianti/:impiantoId/omniapi/available
- * Restituisce i nodi disponibili (online ma non ancora registrati)
+ * Restituisce i nodi E LED Strip disponibili (online ma non ancora registrati)
  */
 export const getAvailableNodes = async (req: AuthRequest, res: Response) => {
   try {
@@ -267,21 +267,55 @@ export const getAvailableNodes = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Impianto non trovato' });
     }
 
-    // Prendi tutti i nodi live
+    // Prendi tutti i nodi relay live
     const liveNodes = getAllNodes();
 
-    // Prendi i MAC già registrati
+    // Prendi tutti i LED Strip live
+    const liveLedDevices = getAllLedDevices();
+
+    // Prendi i MAC già registrati (sia relay che LED)
     const registered: any = await query(
-      `SELECT mac_address FROM dispositivi WHERE device_type = 'omniapi_node'`
+      `SELECT mac_address, device_type FROM dispositivi WHERE device_type IN ('omniapi_node', 'omniapi_led')`
     );
     const registeredMacs = new Set((registered || []).map((r: any) => r.mac_address));
 
-    // Filtra solo quelli non ancora registrati
-    const availableNodes = liveNodes.filter(node => !registeredMacs.has(node.mac));
+    // Filtra relay nodes non registrati
+    const availableNodes = liveNodes
+      .filter(node => !registeredMacs.has(node.mac))
+      .map(node => ({
+        ...node,
+        device_type: 'omniapi_node' as const
+      }));
+
+    // Filtra LED Strip non registrati
+    const availableLeds = liveLedDevices
+      .filter(led => !registeredMacs.has(led.mac))
+      .map(led => ({
+        mac: led.mac,
+        online: led.online,
+        rssi: 0, // LED non hanno rssi
+        version: 'LED',
+        relay1: false,
+        relay2: false,
+        lastSeen: led.lastSeen,
+        device_type: 'omniapi_led' as const,
+        // Dati LED specifici
+        ledState: {
+          power: led.power,
+          r: led.r,
+          g: led.g,
+          b: led.b,
+          brightness: led.brightness,
+          effect: led.effect
+        }
+      }));
+
+    // Combina entrambi
+    const allAvailable = [...availableNodes, ...availableLeds];
 
     res.json({
-      nodes: availableNodes,
-      count: availableNodes.length
+      nodes: allAvailable,
+      count: allAvailable.length
     });
   } catch (error) {
     console.error('Errore getAvailableNodes:', error);
@@ -291,17 +325,25 @@ export const getAvailableNodes = async (req: AuthRequest, res: Response) => {
 
 /**
  * POST /api/impianti/:impiantoId/omniapi/register
- * Registra un nodo ESP-NOW come dispositivo nel database
- * Body: { mac: string, nome: string, stanza_id?: number }
+ * Registra un nodo ESP-NOW o LED Strip come dispositivo nel database
+ * Body: { mac: string, nome: string, stanza_id?: number, device_type?: 'omniapi_node' | 'omniapi_led' }
  */
 export const registerNode = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
-    const { mac, nome, stanza_id } = req.body;
+    const { mac, nome, stanza_id, device_type } = req.body;
+
+    console.log('📝 registerNode called:', { impiantoId, mac, nome, device_type, stanza_id });
 
     if (!mac || !nome) {
+      console.log('📝 registerNode: MAC o nome mancanti');
       return res.status(400).json({ error: 'MAC e nome sono richiesti' });
     }
+
+    // Determina il tipo di dispositivo (default: omniapi_node)
+    const deviceType = device_type === 'omniapi_led' ? 'omniapi_led' : 'omniapi_node';
+    const isLed = deviceType === 'omniapi_led';
+    console.log('📝 registerNode: deviceType=', deviceType, 'isLed=', isLed);
 
     // Verifica accesso all'impianto
     const impianti: any = await query(
@@ -311,14 +353,26 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
+    console.log('📝 registerNode: impianti trovati:', impianti?.length);
+
     if (!impianti || impianti.length === 0) {
       return res.status(404).json({ error: 'Impianto non trovato' });
     }
 
-    // Verifica che il nodo esista (sia online)
-    const liveNode = getNode(mac);
-    if (!liveNode) {
-      return res.status(404).json({ error: 'Nodo non trovato. Assicurati che sia online.' });
+    // Verifica che il dispositivo esista (sia online)
+    let liveDevice: any = null;
+    if (isLed) {
+      liveDevice = getLedState(mac);
+      console.log('📝 registerNode: getLedState result:', liveDevice);
+      if (!liveDevice) {
+        return res.status(404).json({ error: 'LED Strip non trovato. Assicurati che sia online.' });
+      }
+    } else {
+      liveDevice = getNode(mac);
+      console.log('📝 registerNode: getNode result:', liveDevice);
+      if (!liveDevice) {
+        return res.status(404).json({ error: 'Nodo non trovato. Assicurati che sia online.' });
+      }
     }
 
     // Verifica che non sia già registrato
@@ -329,7 +383,7 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
 
     if (existing && existing.length > 0) {
       return res.status(409).json({
-        error: 'Nodo già registrato',
+        error: 'Dispositivo già registrato',
         impianto_id: existing[0].impianto_id
       });
     }
@@ -338,23 +392,38 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
     const gateway = getGatewayState();
     const gatewayIp = gateway?.ip || '192.168.1.205';
 
+    // Costruisci omniapi_info in base al tipo
+    const omniapiInfo = isLed
+      ? {
+          type: 'led_strip',
+          power: liveDevice.power,
+          r: liveDevice.r,
+          g: liveDevice.g,
+          b: liveDevice.b,
+          brightness: liveDevice.brightness,
+          effect: liveDevice.effect
+        }
+      : {
+          version: liveDevice.version,
+          rssi: liveDevice.rssi,
+          relay1: liveDevice.relay1,
+          relay2: liveDevice.relay2
+        };
+
     // Inserisci nel DB
     const result: any = await query(
       `INSERT INTO dispositivi
        (impianto_id, stanza_id, tipo, device_type, nome, mac_address, gateway_ip, stato, omniapi_info)
-       VALUES (?, ?, 'luce', 'omniapi_node', ?, ?, ?, 'online', ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'online', ?)`,
       [
         impiantoId,
         stanza_id || null,
+        isLed ? 'led_strip' : 'luce',
+        deviceType,
         nome,
         mac,
         gatewayIp,
-        JSON.stringify({
-          version: liveNode.version,
-          rssi: liveNode.rssi,
-          relay1: liveNode.relay1,
-          relay2: liveNode.relay2
-        })
+        JSON.stringify(omniapiInfo)
       ]
     );
 
@@ -366,15 +435,15 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
 
     res.status(201).json({
       success: true,
-      message: 'Nodo registrato con successo',
+      message: isLed ? 'LED Strip registrato con successo' : 'Nodo registrato con successo',
       dispositivo: dispositivo?.[0] || dispositivo
     });
   } catch (error: any) {
     console.error('Errore registerNode:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ error: 'Nodo già registrato' });
+      return res.status(409).json({ error: 'Dispositivo già registrato' });
     }
-    res.status(500).json({ error: 'Errore durante la registrazione del nodo' });
+    res.status(500).json({ error: 'Errore durante la registrazione del dispositivo' });
   }
 };
 

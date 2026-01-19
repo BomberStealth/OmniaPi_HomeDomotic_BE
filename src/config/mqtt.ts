@@ -7,18 +7,28 @@ import {
   updateGatewayState,
   updateNodesFromList,
   updateNodeState,
-  getAllNodes
+  getAllNodes,
+  updateLedState,
+  getLedState
 } from '../services/omniapiState';
 import {
   emitOmniapiGatewayUpdate,
   emitOmniapiNodeUpdate,
-  emitOmniapiNodesUpdate
+  emitOmniapiNodesUpdate,
+  emitOmniapiLedUpdate
 } from '../socket';
 import {
   updateGatewayFromMqtt,
   markGatewayOffline
 } from '../controllers/gatewayController';
 import * as notificationService from '../services/notificationService';
+// Device Type Registry - Single Source of Truth
+import {
+  FIRMWARE_IDS,
+  isLedFirmwareId,
+  isRelayFirmwareId,
+  getDeviceTypeFromFirmwareId
+} from './deviceTypes';
 
 dotenv.config();
 
@@ -146,7 +156,9 @@ export const connectMQTT = () => {
       'omniapi/gateway/status',       // Stato gateway
       'omniapi/gateway/nodes',        // Lista nodi
       'omniapi/gateway/node/+/state', // Stato singolo nodo
-      'omniapi/gateway/lwt'           // Last Will and Testament (offline)
+      'omniapi/gateway/lwt',          // Last Will and Testament (offline)
+      // OmniaPi LED Strip topics
+      'omniapi/led/state'             // LED Strip state updates
     ];
     mqttClient?.subscribe(topics, (err) => {
       if (err) console.error('❌ Errore subscribe MQTT:', err);
@@ -187,6 +199,26 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
   try {
     const data = JSON.parse(payload);
+
+    // omniapi/led/state (LED Strip state updates)
+    if (topic === 'omniapi/led/state') {
+      console.log('📡 MQTT LED state:', data);
+
+      // Update state in memory store
+      const ledState = updateLedState(data.mac, {
+        power: data.power,
+        r: data.r,
+        g: data.g,
+        b: data.b,
+        brightness: data.brightness,
+        effect: data.effect,
+        online: true
+      });
+
+      // Emit WebSocket event
+      emitOmniapiLedUpdate(ledState);
+      return;
+    }
 
     // omniapi/gateway/lwt (Last Will - Gateway offline)
     if (topic === 'omniapi/gateway/lwt') {
@@ -245,13 +277,47 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
     if (topic === 'omniapi/gateway/nodes') {
       if (data.nodes && Array.isArray(data.nodes)) {
         console.log(`📡 [DEBUG] Nodes list received: ${data.nodes.length} nodes`);
-        data.nodes.forEach((n: any) => {
+
+        // Usa Device Type Registry per filtrare i dispositivi
+        // LED: firmwareId 0x10 (16) o 0x11 (17)
+        // Relay: firmwareId 0x01 (1) o 0x02 (2)
+        const relayNodes = data.nodes.filter((n: any) => isRelayFirmwareId(n.deviceType));
+        const ledNodes = data.nodes.filter((n: any) => isLedFirmwareId(n.deviceType));
+
+        console.log(`📡 [DEBUG] Filtered: ${relayNodes.length} relay nodes, ${ledNodes.length} LED strips`);
+
+        // Log e aggiorna solo i relay nodes in nodesState
+        relayNodes.forEach((n: any) => {
           console.log(`   - ${n.mac}: relay1=${n.relay1}, relay2=${n.relay2}, online=${n.online}`);
         });
-        updateNodesFromList(data.nodes);
+        updateNodesFromList(relayNodes);
         emitOmniapiNodesUpdate(getAllNodes());
-        // Sync nodi al database
-        await syncNodesToDatabase(data.nodes);
+
+        // Aggiorna i LED strip in ledDevicesState
+        ledNodes.forEach((led: any) => {
+          console.log(`   🌈 LED ${led.mac}: online=${led.online}, deviceType=${led.deviceType}`);
+          if (led.ledState) {
+            updateLedState(led.mac, {
+              power: led.ledState.power,
+              r: led.ledState.r,
+              g: led.ledState.g,
+              b: led.ledState.b,
+              brightness: led.ledState.brightness,
+              effect: led.ledState.effect,
+              online: led.online ?? true
+            });
+          } else {
+            // LED senza stato dettagliato - aggiorna solo online
+            updateLedState(led.mac, { online: led.online ?? true });
+          }
+          const ledState = getLedState(led.mac);
+          if (ledState) {
+            emitOmniapiLedUpdate(ledState);
+          }
+        });
+
+        // Sync solo relay nodes al database
+        await syncNodesToDatabase(relayNodes);
       }
       return;
     }

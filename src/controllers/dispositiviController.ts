@@ -4,7 +4,7 @@ import { tasmotaCommand } from '../config/mqtt';
 import { TipoDispositivo } from '../types';
 import { RowDataPacket } from 'mysql2';
 import { AuthRequest } from '../middleware/auth';
-import { getNode } from '../services/omniapiState';
+import { getNode, getLedState } from '../services/omniapiState';
 
 // ============================================
 // CONTROLLER DISPOSITIVI
@@ -43,6 +43,7 @@ export const getAllDispositivi = async (req: AuthRequest, res: Response) => {
 
     // Arricchisci i nodi OmniaPi con stato real-time
     const dispositiviEnriched = (dispositivi || []).map((d: any) => {
+      // Nodi relay OmniaPi
       if (d.device_type === 'omniapi_node' && d.mac_address) {
         const liveNode = getNode(d.mac_address);
         return {
@@ -52,6 +53,25 @@ export const getAllDispositivi = async (req: AuthRequest, res: Response) => {
           relay1: liveNode?.relay1 ?? false,
           relay2: liveNode?.relay2 ?? false,
         };
+      }
+      // LED Strip OmniaPi - arricchisci con stato real-time
+      if (d.device_type === 'omniapi_led' && d.mac_address) {
+        const liveLed = getLedState(d.mac_address);
+        if (liveLed) {
+          return {
+            ...d,
+            mac: d.mac_address,
+            online: liveLed.online ?? true,
+            led_power: liveLed.power ?? false,
+            power_state: liveLed.power ?? false,
+            led_r: liveLed.r ?? 255,
+            led_g: liveLed.g ?? 255,
+            led_b: liveLed.b ?? 255,
+            led_brightness: liveLed.brightness ?? 255,
+            led_effect: liveLed.effect ?? 0,
+            stato: liveLed.online !== false ? 'online' : 'offline',
+          };
+        }
       }
       return d;
     });

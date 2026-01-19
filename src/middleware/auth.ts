@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { jwtConfig } from '../config/jwt';
 import { JWTPayload, UserRole } from '../types';
+import { query } from '../config/database';
+import { RowDataPacket } from 'mysql2';
 
 // ============================================
 // MIDDLEWARE AUTENTICAZIONE JWT
@@ -22,7 +24,7 @@ export interface AuthRequest extends Request {
 }
 
 // Verifica token JWT
-export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+export const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
 
@@ -34,6 +36,26 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
     }
 
     const decoded = jwt.verify(token, jwtConfig.secret) as JWTPayload;
+
+    // Verifica token_version per invalidare sessioni dopo cambio password
+    if (decoded.tokenVersion !== undefined) {
+      const users = await query(
+        'SELECT token_version FROM utenti WHERE id = ?',
+        [decoded.userId]
+      ) as RowDataPacket[];
+
+      if (users.length > 0) {
+        const dbTokenVersion = users[0].token_version || 0;
+        if (decoded.tokenVersion !== dbTokenVersion) {
+          return res.status(401).json({
+            success: false,
+            error: 'Sessione invalidata. Effettua nuovamente il login.',
+            sessionInvalidated: true
+          });
+        }
+      }
+    }
+
     req.user = decoded;
     next();
   } catch (error) {

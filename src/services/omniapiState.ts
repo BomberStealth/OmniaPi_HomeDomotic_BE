@@ -3,8 +3,14 @@
  * In-memory storage for Gateway and Nodes state
  */
 
+import {
+  OmniapiNodeLegacy,
+  LedDeviceLegacy
+} from '../types/device';
+
 // ============================================
 // TYPES
+// Re-export legacy types for backward compatibility
 // ============================================
 
 export interface OmniapiGateway {
@@ -16,15 +22,9 @@ export interface OmniapiGateway {
   lastSeen: Date;
 }
 
-export interface OmniapiNode {
-  mac: string;
-  online: boolean;
-  rssi: number;
-  version: string;
-  relay1: boolean;
-  relay2: boolean;
-  lastSeen: Date;
-}
+// Use legacy types from types/device.ts
+export type OmniapiNode = OmniapiNodeLegacy;
+export type LedDevice = LedDeviceLegacy;
 
 // ============================================
 // STATE STORAGE
@@ -32,6 +32,7 @@ export interface OmniapiNode {
 
 let gatewayState: OmniapiGateway | null = null;
 const nodesState: Map<string, OmniapiNode> = new Map();
+const ledDevicesState: Map<string, LedDevice> = new Map();
 
 // ============================================
 // GATEWAY FUNCTIONS
@@ -136,5 +137,48 @@ export const getNodesCount = (): number => {
 export const clearState = () => {
   gatewayState = null;
   nodesState.clear();
+  ledDevicesState.clear();
   console.log('📡 OmniaPi state cleared');
+};
+
+// ============================================
+// LED DEVICES FUNCTIONS
+// ============================================
+
+export const updateLedState = (mac: string, state: Partial<LedDevice>): LedDevice => {
+  const existing = ledDevicesState.get(mac) || {
+    mac,
+    power: false,
+    r: 0,
+    g: 255,
+    b: 0,
+    brightness: 128,
+    effect: 0,
+    online: true,
+    lastSeen: new Date()
+  };
+
+  const updated: LedDevice = {
+    ...existing,
+    ...state,
+    mac, // Ensure mac is always set
+    lastSeen: new Date()
+  };
+
+  ledDevicesState.set(mac, updated);
+  console.log(`📡 OmniaPi LED ${mac} updated:`, updated);
+  return updated;
+};
+
+export const getLedState = (mac: string): LedDevice | undefined => {
+  return ledDevicesState.get(mac);
+};
+
+export const getAllLedDevices = (): LedDevice[] => {
+  return Array.from(ledDevicesState.values());
+};
+
+export const removeLedDevice = (mac: string): void => {
+  ledDevicesState.delete(mac);
+  console.log(`📡 OmniaPi LED ${mac} removed`);
 };

@@ -15,6 +15,8 @@ import * as smartHomeController from '../controllers/smartHomeController';
 import * as omniapiController from '../controllers/omniapiController';
 import * as gatewayController from '../controllers/gatewayController';
 import * as notificationController from '../controllers/notificationController';
+import * as ledController from '../controllers/ledController';
+import deviceRoutes from './deviceRoutes';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
 // RATE LIMITING DISABILITATO - causava blocchi ingiustificati
 // import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
@@ -43,6 +45,19 @@ router.post('/auth/register', validate(registerSchema), authController.register)
 router.get('/auth/profile', authMiddleware, authController.getProfile);
 router.post('/auth/change-password', authMiddleware, authController.changePassword);
 router.post('/auth/logout', authMiddleware, authController.logout);
+
+// Verifica email (pubblico - link da email)
+router.get('/auth/verify-email', authController.verifyEmail);
+// Reinvia email verifica (pubblico)
+router.post('/auth/resend-verification', authController.resendVerification);
+// Reset password (pubblico)
+router.post('/auth/forgot-password', authController.forgotPassword);
+router.post('/auth/reset-password', authController.resetPassword);
+// Aggiorna profilo (nome/cognome)
+router.put('/auth/profile', authMiddleware, authController.updateProfile);
+// GDPR: Elimina account e esporta dati (autenticato)
+router.post('/auth/delete-account', authMiddleware, authController.deleteAccount);
+router.get('/auth/export-data', authMiddleware, authController.exportData);
 
 // Health check per auth
 router.get('/auth/health', (req, res) => {
@@ -209,6 +224,13 @@ router.put('/omniapi/nodes/:id', authMiddleware, omniapiController.updateRegiste
 router.post('/omniapi/nodes/:id/control', authMiddleware, omniapiController.controlRegisteredNode);
 
 // ============================================
+// LED STRIP ROUTES (OmniaPi LED Strip devices)
+// ============================================
+router.post('/led/command', ledController.sendLedCommand);
+router.get('/led/devices', ledController.getLedDevices);
+router.get('/led/state/:mac', ledController.getLedStateByMac);
+
+// ============================================
 // ADMIN ROUTES
 // ============================================
 router.get('/admin/users', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.getAllUsers);
@@ -228,5 +250,12 @@ router.post('/notifications/test', authMiddleware, notificationController.sendTe
 router.get('/notifications/history', authMiddleware, notificationController.getHistory);
 router.post('/notifications/:id/read', authMiddleware, notificationController.markAsRead);
 router.post('/notifications/read-all', authMiddleware, notificationController.markAllAsRead);
+
+// ============================================
+// UNIFIED DEVICE API ROUTES (NEW - Phase 2)
+// /api/devices/* - Unified API for all device types
+// Coexists with legacy routes for backward compatibility
+// ============================================
+router.use('/', authMiddleware, deviceRoutes);
 
 export default router;
