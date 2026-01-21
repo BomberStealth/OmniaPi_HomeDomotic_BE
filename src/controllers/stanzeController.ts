@@ -15,8 +15,8 @@ export const getStanze = async (req: AuthRequest, res: Response) => {
     // Verifica che l'utente abbia accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -56,8 +56,8 @@ export const createStanza = async (req: AuthRequest, res: Response) => {
     // Verifica che l'utente abbia accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -111,8 +111,8 @@ export const updateStanza = async (req: AuthRequest, res: Response) => {
     const stanze: any = await query(
       `SELECT s.* FROM stanze s
        JOIN impianti i ON s.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE s.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE s.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -157,8 +157,8 @@ export const deleteStanza = async (req: AuthRequest, res: Response) => {
     const stanze: any = await query(
       `SELECT s.* FROM stanze s
        JOIN impianti i ON s.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE s.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE s.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 

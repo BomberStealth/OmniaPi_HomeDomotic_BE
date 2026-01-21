@@ -74,8 +74,11 @@ export const registerSchema = Joi.object({
       'any.required': 'Cognome richiesto'
     }),
   ruolo: Joi.string()
-    .valid('cliente', 'installatore', 'admin')
-    .optional(),
+    .valid('proprietario', 'installatore')
+    .default('proprietario')
+    .messages({
+      'any.only': 'Ruolo non valido. Deve essere "proprietario" o "installatore"'
+    }),
   gdprAccepted: Joi.boolean()
     .required()
     .messages({

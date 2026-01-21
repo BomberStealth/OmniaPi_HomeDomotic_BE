@@ -23,8 +23,8 @@ export const getGeofences = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -54,8 +54,8 @@ export const createZone = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -97,8 +97,8 @@ export const updateZone = async (req: AuthRequest, res: Response) => {
     const [zones]: any = await query(
       `SELECT gz.* FROM geofence_zones gz
        JOIN impianti i ON gz.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE gz.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE gz.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -131,8 +131,8 @@ export const deleteZone = async (req: AuthRequest, res: Response) => {
     const [zones]: any = await query(
       `SELECT gz.* FROM geofence_zones gz
        JOIN impianti i ON gz.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE gz.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE gz.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -193,8 +193,8 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -219,8 +219,8 @@ export const getPresence = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 

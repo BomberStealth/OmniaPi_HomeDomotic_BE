@@ -117,7 +117,7 @@ export async function sendToImpianto(impiantoId: number, notification: Notificat
     // Query che trova tutti gli utenti con accesso all'impianto:
     // 1. Proprietario (cliente_id)
     // 2. Utente associato (utente_id)
-    // 3. Utenti con accesso condiviso (impianti_condivisi)
+    // 3. Utenti con condivisione accettata (condivisioni_impianto)
     // Esclude l'utente che ha fatto l'azione (se specificato)
     const excludeClause = excludeUserId ? `AND ft.user_id != ${excludeUserId}` : '';
 
@@ -131,8 +131,8 @@ export async function sendToImpianto(impiantoId: number, notification: Notificat
          -- Utente associato (se diverso dal proprietario)
          SELECT utente_id FROM impianti WHERE id = ? AND utente_id IS NOT NULL
          UNION
-         -- Utenti con accesso condiviso
-         SELECT utente_id FROM impianti_condivisi WHERE impianto_id = ?
+         -- Utenti con condivisione accettata
+         SELECT utente_id FROM condivisioni_impianto WHERE impianto_id = ? AND stato = 'accettato'
        ) ${excludeClause}`,
       [impiantoId, impiantoId, impiantoId]
     ) as FcmToken[];
@@ -274,19 +274,26 @@ export async function sendBroadcast(notification: NotificationPayload): Promise<
 
 /**
  * Salva una notifica nello storico e invia push
- * Se excludeUserId è specificato, l'utente NON riceverà la push notification
+ * Se excludeUserId è specificato:
+ * - L'utente NON riceverà la push notification
+ * - L'utente NON riceverà la notifica via WebSocket
+ * - La notifica viene salvata come GIÀ LETTA per quell'utente (non appare nel conteggio)
  * (utile per non notificare chi ha eseguito l'azione)
  */
 export async function sendAndSave(entry: NotificationHistoryEntry): Promise<number> {
   try {
-    // Salva nello storico
+    // Se c'è excludeUserId, salva la notifica come già letta per quell'utente
+    // Così non appare nel conteggio "non lette" dopo F5
+    const readBy = entry.excludeUserId ? JSON.stringify([entry.excludeUserId]) : '[]';
+
+    // Salva nello storico (con read_by pre-popolato se excludeUserId)
     const result = await query(
-      `INSERT INTO notifications_history (impianto_id, user_id, type, title, body, data)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [entry.impiantoId, entry.userId || null, entry.type, entry.title, entry.body, JSON.stringify(entry.data || {})]
+      `INSERT INTO notifications_history (impianto_id, user_id, type, title, body, data, read_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [entry.impiantoId, entry.userId || null, entry.type, entry.title, entry.body, JSON.stringify(entry.data || {}), readBy]
     ) as ResultSetHeader;
 
-    console.log(`✅ Notification saved to history: ${entry.title}${entry.excludeUserId ? ` (excluding user ${entry.excludeUserId})` : ''}`);
+    console.log(`✅ Notification saved to history: ${entry.title}${entry.excludeUserId ? ` (pre-read by user ${entry.excludeUserId})` : ''}`);
 
     // Emit via WebSocket per aggiornamento real-time (esclude chi ha fatto l'azione)
     emitNotification(entry.impiantoId, {

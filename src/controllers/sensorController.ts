@@ -22,8 +22,8 @@ export const getSensors = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -49,8 +49,8 @@ export const getDeviceReadings = async (req: AuthRequest, res: Response) => {
     const [dispositivi]: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -84,8 +84,8 @@ export const getHistory = async (req: AuthRequest, res: Response) => {
     const [dispositivi]: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -120,8 +120,8 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     const [dispositivi]: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -156,8 +156,8 @@ export const getChartData = async (req: AuthRequest, res: Response) => {
     const [dispositivi]: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -189,8 +189,8 @@ export const getSensorDashboard = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 

@@ -259,9 +259,80 @@ export const sendResetPasswordEmail = async (
   }
 };
 
+// ============================================
+// INVIA EMAIL INVITO IMPIANTO
+// ============================================
+export const sendInviteEmail = async (
+  email: string,
+  impiantoNome: string,
+  ruolo: string,
+  token: string
+): Promise<boolean> => {
+  const registerLink = `${FRONTEND_URL}/register?invite=${token}`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; background-color: #12110f; font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #12110f; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 500px; background: linear-gradient(165deg, #2a2722 0%, #1e1c18 50%, #1a1816 100%); border-radius: 24px; border: 1px solid rgba(106, 212, 160, 0.15);">
+          <tr>
+            <td style="padding: 40px 30px; text-align: center;">
+              <div style="font-size: 40px; margin-bottom: 20px;">🏠</div>
+              <h1 style="color: #6ad4a0; font-size: 24px; margin: 0 0 20px 0;">
+                Sei stato invitato!
+              </h1>
+              <p style="color: rgba(255,255,255,0.75); font-size: 15px; line-height: 1.6; margin: 0 0 10px 0;">
+                Sei stato invitato a gestire l'impianto
+              </p>
+              <p style="color: #a0e8c4; font-size: 18px; font-weight: 600; margin: 0 0 10px 0;">
+                "${impiantoNome}"
+              </p>
+              <p style="color: rgba(255,255,255,0.6); font-size: 14px; margin: 0 0 30px 0;">
+                come <strong style="color: #6ad4a0;">${ruolo}</strong>
+              </p>
+              <a href="${registerLink}" style="display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #a0e8c4, #6ad4a0); color: #0a0a09; font-weight: 600; text-decoration: none; border-radius: 12px; font-size: 15px;">
+                Crea il tuo account
+              </a>
+              <p style="color: rgba(255,255,255,0.4); font-size: 12px; margin: 30px 0 0 0;">
+                Questo invito scade tra 7 giorni
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
+  try {
+    await transporter.sendMail({
+      from: `"OmniaPi Home" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: `🏠 Invito: Gestisci "${impiantoNome}" su OmniaPi`,
+      html,
+    });
+
+    console.log(`📧 Email invito inviata a: ${email}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Errore invio email invito a ${email}:`, error);
+    return false;
+  }
+};
+
 export default {
   generateToken,
   verifyEmailConfig,
   sendVerificationEmail,
   sendResetPasswordEmail,
+  sendInviteEmail,
 };

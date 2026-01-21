@@ -56,16 +56,17 @@ export const getImpianti = async (req: Request, res: Response) => {
     } else {
       // Tutti gli utenti vedono:
       // 1. I propri impianti (utente_id = userId)
-      // 2. Gli impianti condivisi con loro
+      // 2. Gli impianti condivisi con loro (dalla tabella condivisioni_impianto con stato='accettato')
       const propri = await query(
         'SELECT * FROM impianti WHERE utente_id = ? ORDER BY creato_il DESC',
         [userId]
       ) as RowDataPacket[];
 
+      // Query sulla tabella corretta: condivisioni_impianto con stato='accettato'
       const condivisi = await query(
         `SELECT i.* FROM impianti i
-         INNER JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-         WHERE ic.utente_id = ?
+         INNER JOIN condivisioni_impianto c ON i.id = c.impianto_id
+         WHERE c.utente_id = ? AND c.stato = 'accettato'
          ORDER BY i.creato_il DESC`,
         [userId]
       ) as RowDataPacket[];
@@ -113,19 +114,27 @@ export const getImpianto = async (req: Request, res: Response) => {
 
     const impianto = impianti[0];
 
-    // Verifica accesso
-    if (ruolo === UserRole.CLIENTE && impianto.cliente_id !== userId) {
-      return res.status(403).json({
-        success: false,
-        error: 'Accesso negato'
-      });
-    }
+    // Verifica accesso - include condivisioni
+    // Admin può sempre accedere
+    if (ruolo !== UserRole.ADMIN) {
+      // Proprietario originale o installatore originale possono accedere
+      const isOwner = impianto.utente_id === userId;
+      const isInstaller = impianto.installatore_id === userId;
 
-    if (ruolo === UserRole.INSTALLATORE && impianto.installatore_id !== userId) {
-      return res.status(403).json({
-        success: false,
-        error: 'Accesso negato'
-      });
+      if (!isOwner && !isInstaller) {
+        // Controlla se ha una condivisione accettata
+        const condivisioni = await query(
+          'SELECT id FROM condivisioni_impianto WHERE impianto_id = ? AND utente_id = ? AND stato = ?',
+          [id, userId, 'accettato']
+        ) as RowDataPacket[];
+
+        if (condivisioni.length === 0) {
+          return res.status(403).json({
+            success: false,
+            error: 'Accesso negato'
+          });
+        }
+      }
     }
 
     // Ottieni tutto con una sola query JOIN (fix N+1 problem)
@@ -220,6 +229,16 @@ export const createImpianto = async (req: Request, res: Response) => {
     const { nome, indirizzo, citta, cap, ha_fotovoltaico, fotovoltaico_potenza } = req.body;
     const utente_id = req.user?.userId;
     const email_proprietario = req.user?.email;
+    const ruolo = req.user?.ruolo;
+
+    // Solo ADMIN e INSTALLATORE possono creare impianti
+    // PROPRIETARIO può solo gestire impianti esistenti (invitato da altri)
+    if (ruolo === UserRole.PROPRIETARIO) {
+      return res.status(403).json({
+        success: false,
+        error: 'I proprietari non possono creare nuovi impianti. Contatta un installatore.'
+      });
+    }
 
     if (!nome || !indirizzo || !citta || !cap) {
       return res.status(400).json({
@@ -473,16 +492,17 @@ export const getCondivisioni = async (req: Request, res: Response) => {
       });
     }
 
-    // Ottieni condivisioni attive
+    // Ottieni condivisioni attive (dalla tabella condivisioni_impianto)
     const condivisioni = await query(
       `SELECT
-       ic.id,
-       ic.email_utente as email,
-       ic.ruolo_condivisione as ruolo,
-       ic.creato_il
-       FROM impianti_condivisi ic
-       WHERE ic.impianto_id = ?
-       ORDER BY ic.creato_il DESC`,
+       c.id,
+       c.email_invitato as email,
+       c.ruolo_condivisione as ruolo,
+       c.stato,
+       c.creato_il
+       FROM condivisioni_impianto c
+       WHERE c.impianto_id = ? AND c.stato = 'accettato'
+       ORDER BY c.creato_il DESC`,
       [id]
     ) as RowDataPacket[];
 
@@ -507,10 +527,10 @@ export const revokeCondivisione = async (req: Request, res: Response) => {
 
     // Verifica che l'utente sia il proprietario dell'impianto
     const condivisioni = await query(
-      `SELECT ic.id, i.utente_id
-       FROM impianti_condivisi ic
-       INNER JOIN impianti i ON ic.impianto_id = i.id
-       WHERE ic.id = ?`,
+      `SELECT c.id, i.utente_id
+       FROM condivisioni_impianto c
+       INNER JOIN impianti i ON c.impianto_id = i.id
+       WHERE c.id = ?`,
       [id]
     ) as RowDataPacket[];
 
@@ -529,7 +549,7 @@ export const revokeCondivisione = async (req: Request, res: Response) => {
     }
 
     // Elimina condivisione
-    await query('DELETE FROM impianti_condivisi WHERE id = ?', [id]);
+    await query('DELETE FROM condivisioni_impianto WHERE id = ?', [id]);
 
     res.json({
       success: true,
@@ -573,9 +593,10 @@ export const connectImpianto = async (req: Request, res: Response) => {
 
     const impianto = impianti[0];
 
-    // Verifica se l'utente ha già accesso
+    // Verifica se l'utente ha già accesso (condivisione accettata)
     const existing = await query(
-      'SELECT id FROM impianti_condivisi WHERE impianto_id = ? AND utente_id = ?',
+      `SELECT id FROM condivisioni_impianto
+       WHERE impianto_id = ? AND utente_id = ? AND stato = 'accettato'`,
       [impianto.id, utente_id]
     ) as RowDataPacket[];
 
@@ -586,10 +607,12 @@ export const connectImpianto = async (req: Request, res: Response) => {
       });
     }
 
-    // Crea condivisione
+    // Crea condivisione diretta (già accettata perché tramite codice)
     await query(
-      'INSERT INTO impianti_condivisi (impianto_id, utente_id, email_utente, ruolo_condivisione) VALUES (?, ?, ?, ?)',
-      [impianto.id, utente_id, email_utente, 'controllore']
+      `INSERT INTO condivisioni_impianto
+       (impianto_id, utente_id, email_invitato, ruolo_condivisione, stato, invitato_da, accettato_il)
+       VALUES (?, ?, ?, 'ospite', 'accettato', ?, NOW())`,
+      [impianto.id, utente_id, email_utente, utente_id]
     );
 
     res.json({

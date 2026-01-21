@@ -12,7 +12,7 @@ const migrations = [
     password VARCHAR(255) NOT NULL,
     nome VARCHAR(100) NOT NULL,
     cognome VARCHAR(100) NOT NULL,
-    ruolo ENUM('cliente', 'installatore', 'admin') NOT NULL DEFAULT 'cliente',
+    ruolo ENUM('proprietario', 'installatore', 'admin') NOT NULL DEFAULT 'proprietario',
     creato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     aggiornato_il TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_email (email),

@@ -23,8 +23,8 @@ export const getDispositivi = async (req: AuthRequest, res: Response) => {
     // Verifica che l'utente abbia accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -63,8 +63,8 @@ export const scanTasmota = async (req: AuthRequest, res: Response) => {
     // Verifica che l'utente abbia accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -199,8 +199,8 @@ export const addDispositivo = async (req: AuthRequest, res: Response) => {
     // Verifica che l'utente abbia accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -280,8 +280,8 @@ export const deleteDispositivo = async (req: AuthRequest, res: Response) => {
     const dispositivi: any = await query(
       `SELECT d.*, d.impianto_id FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [deviceId, req.user!.userId, req.user!.userId]
     );
 
@@ -345,8 +345,8 @@ export const updateStanzaDispositivo = async (req: AuthRequest, res: Response) =
     const rows: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -428,8 +428,8 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
     const hasAccess: any = await query(
       `SELECT 1 FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)
        LIMIT 1`,
       [id, req.user!.userId, req.user!.userId]
     );
@@ -574,8 +574,8 @@ export const renameDispositivo = async (req: AuthRequest, res: Response) => {
     const dispositivi: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 

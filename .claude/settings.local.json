@@ -154,7 +154,11 @@
       "Bash(pm2 env:*)",
       "Bash(apt list:*)",
       "Bash(sudo -n rm -rf /var/www/omniapi/*)",
-      "Bash(sudo -S rm:*)"
+      "Bash(sudo -S rm:*)",
+      "Bash(/usr/bin/mariadb:*)",
+      "Bash(systemctl:*)",
+      "Bash(sqlite3:*)",
+      "Bash(/home/omniapi/Desktop/OmniaPi_HomeDomestic/deploy-frontend.sh:*)"
     ]
   }
 }

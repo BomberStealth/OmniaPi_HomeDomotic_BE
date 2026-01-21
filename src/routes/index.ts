@@ -16,6 +16,8 @@ import * as omniapiController from '../controllers/omniapiController';
 import * as gatewayController from '../controllers/gatewayController';
 import * as notificationController from '../controllers/notificationController';
 import * as ledController from '../controllers/ledController';
+import * as sessionsController from '../controllers/sessionsController';
+import * as condivisioniController from '../controllers/condivisioniController';
 import deviceRoutes from './deviceRoutes';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
 // RATE LIMITING DISABILITATO - causava blocchi ingiustificati
@@ -65,6 +67,13 @@ router.get('/auth/health', (req, res) => {
 });
 
 // ============================================
+// SESSIONS ROUTES (Dispositivi Connessi)
+// ============================================
+router.get('/sessions', authMiddleware, sessionsController.getSessions);
+router.delete('/sessions/all', authMiddleware, sessionsController.deleteAllSessions);
+router.delete('/sessions/:id', authMiddleware, sessionsController.deleteSession);
+
+// ============================================
 // IMPIANTI ROUTES
 // ============================================
 router.get('/impianti', authMiddleware, impiantiController.getImpianti);
@@ -75,10 +84,20 @@ router.post('/impianti', authMiddleware, impiantiController.createImpianto);
 router.post('/impianti/connetti', authMiddleware, impiantiController.connectImpianto);
 router.put('/impianti/:id', authMiddleware, impiantiController.updateImpianto);
 router.delete('/impianti/:id', authMiddleware, impiantiController.deleteImpianto);
-// Gestione codice condivisione e condivisioni
+// Gestione codice condivisione (legacy)
 router.post('/impianti/:id/regenerate-code', authMiddleware, impiantiController.regenerateCode);
-router.get('/impianti/:id/condivisioni', authMiddleware, impiantiController.getCondivisioni);
-router.delete('/condivisioni/:id', authMiddleware, impiantiController.revokeCondivisione);
+
+// ============================================
+// CONDIVISIONI ROUTES (Sistema inviti/permessi)
+// ============================================
+router.get('/impianti/:id/miei-permessi', authMiddleware, condivisioniController.getMieiPermessi);
+router.get('/impianti/:id/condivisioni', authMiddleware, condivisioniController.getCondivisioni);
+router.post('/impianti/:id/condivisioni', authMiddleware, condivisioniController.invitaUtente);
+router.put('/condivisioni/:id', authMiddleware, condivisioniController.modificaPermessi);
+router.delete('/condivisioni/:id', authMiddleware, condivisioniController.rimuoviCondivisione);
+router.post('/condivisioni/:id/accetta', authMiddleware, condivisioniController.accettaInvito);
+router.post('/condivisioni/:id/rifiuta', authMiddleware, condivisioniController.rifiutaInvito);
+router.get('/inviti/pendenti', authMiddleware, condivisioniController.getInvitiPendenti);
 
 // ============================================
 // SCENE ROUTES

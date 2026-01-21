@@ -130,8 +130,8 @@ export const getImpiantoGateway = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -198,8 +198,8 @@ export const associateGateway = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -280,8 +280,8 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -326,8 +326,8 @@ export const updateGateway = async (req: AuthRequest, res: Response) => {
     const gateways: any = await query(
       `SELECT g.* FROM gateways g
        JOIN impianti i ON g.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE g.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE g.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -503,8 +503,8 @@ export const resetGateway = async (req: AuthRequest, res: Response) => {
     if (gateway.impianto_id) {
       const hasAccess: any = await query(
         `SELECT i.id FROM impianti i
-         LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-         WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+         LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+         WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
         [gateway.impianto_id, req.user!.userId, req.user!.userId]
       );
 

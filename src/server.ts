@@ -7,6 +7,7 @@ import { initializeSocket } from './socket';
 import { loadAllSchedules } from './services/sceneScheduler';
 import { checkConditionalScenes } from './services/conditionsEngine';
 import { runOmniapiMigration } from './utils/migrate-omniapi';
+import { initSessionsTable, cleanupExpiredSessions } from './controllers/sessionsController';
 import logger from './config/logger';
 
 dotenv.config();
@@ -24,6 +25,14 @@ const startServer = async () => {
 
     // Esegui migrazioni OmniaPi (idempotenti)
     await runOmniapiMigration();
+
+    // Inizializza tabella sessioni
+    await initSessionsTable();
+
+    // Pulizia sessioni scadute ogni ora
+    setInterval(() => {
+      cleanupExpiredSessions();
+    }, 60 * 60 * 1000);
 
     // Connetti MQTT
     connectMQTT();

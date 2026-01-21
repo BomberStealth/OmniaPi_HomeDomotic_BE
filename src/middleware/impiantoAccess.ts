@@ -41,11 +41,11 @@ export const requireImpiantoAccess = async (
       });
     }
 
-    // Query unificata: verifica proprietà O condivisione
+    // Query unificata: verifica proprietà O condivisione accettata
     const impianti = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)
        LIMIT 1`,
       [impiantoId, userId, userId]
     ) as RowDataPacket[];

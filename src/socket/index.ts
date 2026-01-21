@@ -254,3 +254,16 @@ export const emitNotification = (impiantoId: number, notification: NotificationE
     }
   }
 };
+
+// Emit notification to a specific user (by userId)
+export const emitNotificationToUser = (userId: number, notification: any) => {
+  if (ioInstance) {
+    // Find all sockets belonging to this user
+    ioInstance.sockets.sockets.forEach(socket => {
+      if (socket.data.user?.userId === userId) {
+        socket.emit('notification', notification);
+        console.log(`🔔 WS: notification emitted to user ${userId}: ${notification.titolo || notification.title}`);
+      }
+    });
+  }
+};

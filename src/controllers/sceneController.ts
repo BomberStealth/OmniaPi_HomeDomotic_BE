@@ -21,8 +21,8 @@ export const getScene = async (req: AuthRequest, res: Response) => {
     // Verifica che l'utente abbia accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -56,8 +56,8 @@ export const createScena = async (req: AuthRequest, res: Response) => {
     // Verifica che l'utente abbia accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -104,8 +104,8 @@ export const updateScena = async (req: AuthRequest, res: Response) => {
     const scene: any = await query(
       `SELECT s.* FROM scene s
        JOIN impianti i ON s.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE s.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE s.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -154,8 +154,8 @@ export const deleteScena = async (req: AuthRequest, res: Response) => {
     const scene: any = await query(
       `SELECT s.* FROM scene s
        JOIN impianti i ON s.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE s.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE s.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -191,8 +191,8 @@ export const toggleShortcut = async (req: AuthRequest, res: Response) => {
     const scene: any = await query(
       `SELECT s.* FROM scene s
        JOIN impianti i ON s.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE s.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE s.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -204,6 +204,10 @@ export const toggleShortcut = async (req: AuthRequest, res: Response) => {
       'UPDATE scene SET is_shortcut = ? WHERE id = ?',
       [is_shortcut, id]
     );
+
+    // Emetti evento WebSocket per aggiornare il frontend in tempo reale
+    const scenaAggiornata = { ...scene[0], is_shortcut };
+    emitScenaUpdate(scene[0].impianto_id, scenaAggiornata, 'updated');
 
     res.json({ success: true, is_shortcut });
   } catch (error) {
@@ -221,8 +225,8 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
     const scene: any = await query(
       `SELECT s.* FROM scene s
        JOIN impianti i ON s.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE s.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE s.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -391,8 +395,8 @@ export const getSunTimes = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -438,8 +442,8 @@ export const getUpcomingSun = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const [impianti]: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -487,8 +491,8 @@ export const autoPopulateDefaultScenes = async (req: AuthRequest, res: Response)
     // Verifica accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 

@@ -23,6 +23,7 @@ import {
   sendVerificationEmail,
   sendResetPasswordEmail
 } from '../services/emailService';
+import { createSession, deleteSessionByToken } from './sessionsController';
 
 // ============================================
 // CONTROLLER AUTENTICAZIONE - SECURITY ENHANCED
@@ -177,6 +178,15 @@ export const login = async (req: Request, res: Response) => {
     // Audit log success
     await auditLoginSuccess(user.id, user.email, req);
 
+    // Crea sessione nel database
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+    try {
+      await createSession(user.id, token, userAgent, clientIp);
+    } catch (sessionError) {
+      console.error('⚠️ Errore creazione sessione:', sessionError);
+      // Non bloccare il login se la sessione non viene creata
+    }
+
     // Log login riuscito
     const loginTime = Date.now() - startTime;
     console.log(`✅ Login riuscito - User: ${user.email} (${user.ruolo}) da IP: ${clientIp} [${loginTime}ms]`);
@@ -210,9 +220,13 @@ export const register = async (req: Request, res: Response) => {
   const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
 
   try {
-    const { email, password, nome, cognome, gdprAccepted, ageConfirmed } = req.body;
+    const { email, password, nome, cognome, ruolo, gdprAccepted, ageConfirmed } = req.body;
     console.log('[REGISTER] req.body:', JSON.stringify(req.body));
-    console.log('[REGISTER] gdprAccepted:', gdprAccepted, 'ageConfirmed:', ageConfirmed);
+    console.log('[REGISTER] gdprAccepted:', gdprAccepted, 'ageConfirmed:', ageConfirmed, 'ruolo:', ruolo);
+
+    // Valida ruolo (solo proprietario o installatore, mai admin da registrazione)
+    const validRoles = ['proprietario', 'installatore'];
+    const userRole = validRoles.includes(ruolo) ? ruolo : 'proprietario';
     const normalizedEmail = email.toLowerCase().trim();
 
     // ========================================
@@ -277,7 +291,7 @@ export const register = async (req: Request, res: Response) => {
     const verificationToken = generateToken();
     const tokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 ore
 
-    // Inserisci nuovo utente (ruolo sempre "cliente" per auto-registrazione)
+    // Inserisci nuovo utente con ruolo scelto (proprietario o installatore)
     const result: any = await query(
       `INSERT INTO utenti (
         email, password, nome, cognome, ruolo,
@@ -285,7 +299,7 @@ export const register = async (req: Request, res: Response) => {
         gdpr_accepted, gdpr_accepted_at, age_confirmed
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
       [
-        normalizedEmail, hashedPassword, nome.trim(), cognome.trim(), 'cliente',
+        normalizedEmail, hashedPassword, nome.trim(), cognome.trim(), userRole,
         false, verificationToken, tokenExpires,
         true, true
       ]
@@ -296,16 +310,23 @@ export const register = async (req: Request, res: Response) => {
     // Invia email di verifica
     const emailSent = await sendVerificationEmail(normalizedEmail, nome.trim(), verificationToken);
 
+    // Collega inviti pendenti a questo nuovo utente
+    const { linkPendingInvites } = await import('./condivisioniController');
+    const linkedInvites = await linkPendingInvites(result.insertId, normalizedEmail);
+    if (linkedInvites > 0) {
+      console.log(`🔗 ${linkedInvites} inviti pendenti collegati al nuovo utente ${normalizedEmail}`);
+    }
+
     // Audit log success
     await logAudit({
       userId: result.insertId,
       action: AuditAction.REGISTER,
       severity: AuditSeverity.INFO,
-      details: { email: normalizedEmail, emailSent },
+      details: { email: normalizedEmail, ruolo: userRole, emailSent },
       success: true,
     }, req);
 
-    console.log(`✅ Registrazione riuscita - User: ${normalizedEmail} (cliente) da IP: ${clientIp} [${registrationTime}ms]`);
+    console.log(`✅ Registrazione riuscita - User: ${normalizedEmail} (${userRole}) da IP: ${clientIp} [${registrationTime}ms]`);
     console.log(`📧 Email verifica ${emailSent ? 'inviata' : 'FALLITA'} a: ${normalizedEmail}`);
 
     res.status(201).json({
@@ -444,10 +465,20 @@ export const changePassword = async (req: Request, res: Response) => {
   }
 };
 
-// Logout (invalidazione lato client + log)
+// Logout (invalidazione lato client + log + elimina sessione)
 export const logout = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
+    const token = req.headers.authorization?.replace('Bearer ', '');
+
+    // Elimina sessione dal database
+    if (token) {
+      try {
+        await deleteSessionByToken(token);
+      } catch (sessionError) {
+        console.error('⚠️ Errore eliminazione sessione:', sessionError);
+      }
+    }
 
     await logAudit({
       userId,

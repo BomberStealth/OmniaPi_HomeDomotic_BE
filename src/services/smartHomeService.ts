@@ -127,8 +127,8 @@ export const getGoogleDevices = async (userId: number): Promise<SmartHomeDevice[
        FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
        LEFT JOIN stanze s ON d.stanza_id = s.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE (i.utente_id = ? OR ic.utente_id = ?) AND d.stato = 'online'`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE (i.utente_id = ? OR c.utente_id = ?) AND d.stato = 'online'`,
       [userId, userId]
     );
 
@@ -156,8 +156,8 @@ export const getGoogleDevices = async (userId: number): Promise<SmartHomeDevice[
       `SELECT sc.*, i.nome as impianto_nome
        FROM scene sc
        JOIN impianti i ON sc.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE (i.utente_id = ? OR c.utente_id = ?)`,
       [userId, userId]
     );
 
@@ -204,8 +204,8 @@ export const executeGoogleCommand = async (
       const [scene]: any = await query(
         `SELECT sc.* FROM scene sc
          JOIN impianti i ON sc.impianto_id = i.id
-         LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-         WHERE sc.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+         LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+         WHERE sc.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
         [id, userId, userId]
       );
 
@@ -232,8 +232,8 @@ export const executeGoogleCommand = async (
     const [dispositivi]: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, userId, userId]
     );
 
@@ -291,8 +291,8 @@ export const getGoogleDeviceStates = async (
       const [dispositivi]: any = await query(
         `SELECT d.* FROM dispositivi d
          JOIN impianti i ON d.impianto_id = i.id
-         LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-         WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+         LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+         WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
         [id, userId, userId]
       );
 
@@ -323,8 +323,8 @@ export const getAlexaDevices = async (userId: number): Promise<any[]> => {
        FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
        LEFT JOIN stanze s ON d.stanza_id = s.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE (i.utente_id = ? OR ic.utente_id = ?) AND d.stato = 'online'`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE (i.utente_id = ? OR c.utente_id = ?) AND d.stato = 'online'`,
       [userId, userId]
     );
 
@@ -372,8 +372,8 @@ export const executeAlexaCommand = async (
     const [dispositivi]: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE d.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE d.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, userId, userId]
     );
 

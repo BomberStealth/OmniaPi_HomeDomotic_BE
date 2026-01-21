@@ -201,8 +201,8 @@ export const getRegisteredNodes = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -258,8 +258,8 @@ export const getAvailableNodes = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -348,8 +348,8 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
     // Verifica accesso all'impianto
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE i.id = ? AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
 
@@ -460,9 +460,9 @@ export const unregisterNode = async (req: AuthRequest, res: Response) => {
     const dispositivi: any = await query(
       `SELECT d.*, d.impianto_id FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE d.id = ? AND d.device_type = 'omniapi_node'
-       AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       AND (i.utente_id = ? OR c.utente_id = ?)`,
       [deviceId, req.user!.userId, req.user!.userId]
     );
 
@@ -505,9 +505,9 @@ export const updateRegisteredNode = async (req: AuthRequest, res: Response) => {
     const dispositivi: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE d.id = ? AND d.device_type = 'omniapi_node'
-       AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 
@@ -572,9 +572,9 @@ export const controlRegisteredNode = async (req: AuthRequest, res: Response) => 
     const dispositivi: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE d.id = ? AND d.device_type = 'omniapi_node'
-       AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
 

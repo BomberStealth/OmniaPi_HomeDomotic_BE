@@ -4,6 +4,7 @@ import { jwtConfig } from '../config/jwt';
 import { JWTPayload, UserRole } from '../types';
 import { query } from '../config/database';
 import { RowDataPacket } from 'mysql2';
+import { hashToken, updateSessionActivity, isSessionValid } from '../controllers/sessionsController';
 
 // ============================================
 // MIDDLEWARE AUTENTICAZIONE JWT
@@ -55,6 +56,22 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
         }
       }
     }
+
+    // Verifica e aggiorna sessione nel database
+    const tokenHash = hashToken(token);
+
+    // Verifica che la sessione esista ancora (se eliminata = logout forzato)
+    const sessionValid = await isSessionValid(tokenHash);
+    if (!sessionValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Sessione terminata. Effettua nuovamente il login.',
+        sessionInvalidated: true
+      });
+    }
+
+    // Aggiorna last_active della sessione (async, non bloccante)
+    updateSessionActivity(tokenHash).catch(() => {});
 
     req.user = decoded;
     next();

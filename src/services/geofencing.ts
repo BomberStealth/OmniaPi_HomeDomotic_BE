@@ -70,8 +70,8 @@ export const getUserGeofences = async (userId: number): Promise<GeofenceZone[]> 
     const [zones]: any = await query(
       `SELECT gz.* FROM geofence_zones gz
        JOIN impianti i ON gz.impianto_id = i.id
-       LEFT JOIN impianti_condivisi ic ON i.id = ic.impianto_id
-       WHERE gz.enabled = TRUE AND (i.utente_id = ? OR ic.utente_id = ?)`,
+       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+       WHERE gz.enabled = TRUE AND (i.utente_id = ? OR c.utente_id = ?)`,
       [userId, userId]
     );
     return zones;
