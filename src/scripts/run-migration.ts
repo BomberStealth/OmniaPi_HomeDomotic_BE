@@ -1,161 +1,86 @@
-import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
+import { pool, query } from '../config/database';
 
-dotenv.config();
+// ============================================
+// MIGRATION: Refactor sistema inviti e ruoli
+// ============================================
 
 async function runMigration() {
-  console.log('🔄 Esecuzione migration email verification + GDPR...');
-
-  const connection = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT || '21881'),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    ssl: { rejectUnauthorized: false }
-  });
+  console.log('🔄 Avvio migrazione condivisioni...\n');
 
   try {
-    // 1. Colonne verifica email
-    console.log('📧 Aggiungendo colonne verifica email...');
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN email_verified BOOLEAN DEFAULT FALSE
+    // Step 1: Verifica struttura attuale
+    console.log('📊 Verifica struttura attuale...');
+    const [columns] = await pool.execute(`
+      SELECT COLUMN_NAME, DATA_TYPE, COLUMN_DEFAULT
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'defaultdb' AND TABLE_NAME = 'condivisioni_impianto'
+    `);
+    console.log('Colonne attuali:', (columns as any[]).map(c => c.COLUMN_NAME).join(', '));
+
+    // Check if already migrated
+    const hasAccessoCompleto = (columns as any[]).some(c => c.COLUMN_NAME === 'accesso_completo');
+    const hasRuoloCondivisione = (columns as any[]).some(c => c.COLUMN_NAME === 'ruolo_condivisione');
+
+    if (hasAccessoCompleto && !hasRuoloCondivisione) {
+      console.log('✅ Migrazione già completata!');
+      process.exit(0);
+    }
+
+    // Step 2: Aggiungi colonna accesso_completo (se non esiste)
+    if (!hasAccessoCompleto) {
+      console.log('\n➕ Aggiunta colonna accesso_completo...');
+      await pool.execute(`
+        ALTER TABLE condivisioni_impianto
+        ADD COLUMN accesso_completo BOOLEAN DEFAULT FALSE
       `);
-      console.log('  ✓ email_verified aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - email_verified già esistente');
-      } else throw e;
+      console.log('✅ Colonna accesso_completo aggiunta');
     }
 
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN verification_token VARCHAR(255) NULL
+    // Step 3: Migra i dati esistenti
+    if (hasRuoloCondivisione) {
+      console.log('\n📝 Migrazione dati esistenti...');
+      await pool.execute(`
+        UPDATE condivisioni_impianto
+        SET accesso_completo = CASE
+          WHEN ruolo_condivisione IN ('installatore', 'proprietario') THEN TRUE
+          ELSE FALSE
+        END
       `);
-      console.log('  ✓ verification_token aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - verification_token già esistente');
-      } else throw e;
-    }
+      console.log('✅ Dati migrati');
 
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN verification_token_expires TIMESTAMP NULL
+      // Step 4: Rimuovi la colonna ruolo_condivisione
+      console.log('\n🗑️ Rimozione colonna ruolo_condivisione...');
+      await pool.execute(`
+        ALTER TABLE condivisioni_impianto
+        DROP COLUMN ruolo_condivisione
       `);
-      console.log('  ✓ verification_token_expires aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - verification_token_expires già esistente');
-      } else throw e;
+      console.log('✅ Colonna ruolo_condivisione rimossa');
     }
 
-    // 2. Colonne reset password
-    console.log('🔑 Aggiungendo colonne reset password...');
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN reset_token VARCHAR(255) NULL
-      `);
-      console.log('  ✓ reset_token aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - reset_token già esistente');
-      } else throw e;
-    }
+    // Step 5: Verifica finale
+    console.log('\n📊 Verifica struttura finale...');
+    const [finalColumns] = await pool.execute(`
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'defaultdb' AND TABLE_NAME = 'condivisioni_impianto'
+    `);
+    console.log('Colonne finali:', (finalColumns as any[]).map(c => c.COLUMN_NAME).join(', '));
 
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN reset_token_expires TIMESTAMP NULL
-      `);
-      console.log('  ✓ reset_token_expires aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - reset_token_expires già esistente');
-      } else throw e;
-    }
+    // Mostra condivisioni esistenti
+    const condivisioni = await query(`
+      SELECT id, impianto_id, email_invitato, accesso_completo, stato
+      FROM condivisioni_impianto
+      LIMIT 5
+    `);
+    console.log('\nCondivisioni (sample):');
+    console.table(condivisioni);
 
-    // 3. Colonne GDPR
-    console.log('📋 Aggiungendo colonne GDPR...');
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN gdpr_accepted BOOLEAN DEFAULT FALSE
-      `);
-      console.log('  ✓ gdpr_accepted aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - gdpr_accepted già esistente');
-      } else throw e;
-    }
-
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN gdpr_accepted_at TIMESTAMP NULL
-      `);
-      console.log('  ✓ gdpr_accepted_at aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - gdpr_accepted_at già esistente');
-      } else throw e;
-    }
-
-    try {
-      await connection.execute(`
-        ALTER TABLE utenti
-        ADD COLUMN age_confirmed BOOLEAN DEFAULT FALSE
-      `);
-      console.log('  ✓ age_confirmed aggiunta');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_FIELDNAME') {
-        console.log('  - age_confirmed già esistente');
-      } else throw e;
-    }
-
-    // 4. Grandfathering utenti esistenti
-    console.log('👴 Grandfathering utenti esistenti come verificati...');
-    const [result] = await connection.execute(`
-      UPDATE utenti
-      SET email_verified = TRUE,
-          gdpr_accepted = TRUE,
-          age_confirmed = TRUE
-      WHERE email_verified IS NULL OR email_verified = FALSE
-    `) as any;
-    console.log(`  ✓ ${result.affectedRows} utenti aggiornati`);
-
-    // 5. Indici
-    console.log('📇 Creando indici...');
-    try {
-      await connection.execute(`CREATE INDEX idx_verification_token ON utenti(verification_token)`);
-      console.log('  ✓ idx_verification_token creato');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_KEYNAME') {
-        console.log('  - idx_verification_token già esistente');
-      } else throw e;
-    }
-
-    try {
-      await connection.execute(`CREATE INDEX idx_reset_token ON utenti(reset_token)`);
-      console.log('  ✓ idx_reset_token creato');
-    } catch (e: any) {
-      if (e.code === 'ER_DUP_KEYNAME') {
-        console.log('  - idx_reset_token già esistente');
-      } else throw e;
-    }
-
-    console.log('\n✅ Migration completata con successo!');
-
+    console.log('\n✅ Migrazione completata con successo!');
   } catch (error) {
-    console.error('❌ Errore migration:', error);
+    console.error('❌ Errore durante la migrazione:', error);
     process.exit(1);
   } finally {
-    await connection.end();
+    await pool.end();
   }
 }
 

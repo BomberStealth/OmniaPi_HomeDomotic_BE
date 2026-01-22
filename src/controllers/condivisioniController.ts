@@ -16,7 +16,7 @@ interface Condivisione extends RowDataPacket {
   impianto_id: number;
   utente_id: number | null;
   email_invitato: string;
-  ruolo_condivisione: 'installatore' | 'ospite' | 'proprietario';
+  accesso_completo: boolean;
   stato: 'pendente' | 'accettato' | 'rifiutato';
   puo_controllare_dispositivi: boolean;
   puo_vedere_stato: boolean;
@@ -27,6 +27,35 @@ interface Condivisione extends RowDataPacket {
   creato_il: Date;
   accettato_il: Date | null;
 }
+
+// ============================================
+// HELPER: Calcola ruolo visualizzato
+// Basato su: tipo account invitato + accesso_completo
+// ============================================
+// | Account invitato | Accesso completo | Ruolo visualizzato    |
+// |------------------|------------------|------------------------|
+// | Installatore     | SÌ               | Installatore Secondario|
+// | Installatore     | NO               | Ospite                 |
+// | Proprietario     | SÌ               | Co-Proprietario        |
+// | Proprietario     | NO               | Ospite                 |
+// ============================================
+type RuoloVisualizzato = 'installatore_secondario' | 'co_proprietario' | 'ospite';
+
+const calcRuoloVisualizzato = (
+  tipoAccountInvitato: UserRole | null,
+  accessoCompleto: boolean
+): RuoloVisualizzato => {
+  if (!accessoCompleto) {
+    return 'ospite';
+  }
+
+  if (tipoAccountInvitato === UserRole.INSTALLATORE) {
+    return 'installatore_secondario';
+  }
+
+  // Proprietario o Admin con accesso completo
+  return 'co_proprietario';
+};
 
 // ============================================
 // HELPER: Verifica permessi GESTIONE su impianto
@@ -116,12 +145,13 @@ export const getCondivisioni = async (req: Request, res: Response) => {
       });
     }
 
-    // Ottieni condivisioni con info utente
+    // Ottieni condivisioni con info utente e tipo account
     const condivisioni = await query(`
       SELECT
         c.*,
         u.nome as utente_nome,
         u.cognome as utente_cognome,
+        u.ruolo as utente_tipo_account,
         inv.nome as invitato_da_nome,
         inv.cognome as invitato_da_cognome
       FROM condivisioni_impianto c
@@ -131,9 +161,18 @@ export const getCondivisioni = async (req: Request, res: Response) => {
       ORDER BY c.creato_il DESC
     `, [impiantoId]) as RowDataPacket[];
 
+    // Calcola ruolo_visualizzato per ogni condivisione
+    const condivisioniConRuolo = condivisioni.map(c => ({
+      ...c,
+      ruolo_visualizzato: calcRuoloVisualizzato(
+        c.utente_tipo_account as UserRole | null,
+        c.accesso_completo
+      )
+    }));
+
     res.json({
       success: true,
-      data: condivisioni
+      data: condivisioniConRuolo
     });
   } catch (error) {
     console.error('Errore getCondivisioni:', error);
@@ -155,33 +194,25 @@ export const invitaUtente = async (req: Request, res: Response) => {
     const ruolo = req.user!.ruolo;
     const {
       email,
-      ruolo_condivisione,
-      puo_controllare_dispositivi = true,
-      puo_vedere_stato = true,
+      accesso_completo = false,
       stanze_abilitate = null
     } = req.body;
 
     // Validazione
-    if (!email || !ruolo_condivisione) {
+    if (!email) {
       return res.status(400).json({
         success: false,
-        error: 'Email e ruolo sono obbligatori'
+        error: 'Email è obbligatoria'
       });
     }
 
-    // Admin può invitare anche 'proprietario', altri solo 'installatore' o 'ospite'
-    const ruoliConsentiti = ruolo === UserRole.ADMIN
-      ? ['installatore', 'ospite', 'proprietario']
-      : ['installatore', 'ospite'];
-
-    if (!ruoliConsentiti.includes(ruolo_condivisione)) {
-      return res.status(400).json({
-        success: false,
-        error: ruolo === UserRole.ADMIN
-          ? 'Ruolo non valido. Deve essere "installatore", "ospite" o "proprietario"'
-          : 'Ruolo non valido. Deve essere "installatore" o "ospite"'
-      });
-    }
+    // Se non ha accesso completo, deve specificare stanze
+    // (può comunque essere null per invito in sospeso)
+    // I permessi sono derivati da accesso_completo:
+    // - accesso_completo=true → puo_controllare_dispositivi=true, puo_vedere_stato=true
+    // - accesso_completo=false → puo_vedere_stato=true, puo_controllare_dispositivi dipende da stanze
+    const puo_controllare_dispositivi = accesso_completo || (stanze_abilitate && stanze_abilitate.length > 0);
+    const puo_vedere_stato = true; // Sempre abilitato
 
     // Verifica permessi
     const canManage = await canManageCondivisioni(userId, ruolo, parseInt(impiantoId));
@@ -239,7 +270,7 @@ export const invitaUtente = async (req: Request, res: Response) => {
     // Crea condivisione
     const result = await query(`
       INSERT INTO condivisioni_impianto (
-        impianto_id, utente_id, email_invitato, ruolo_condivisione,
+        impianto_id, utente_id, email_invitato, accesso_completo,
         puo_controllare_dispositivi, puo_vedere_stato, stanze_abilitate,
         invitato_da, token_invito, token_scadenza
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -247,7 +278,7 @@ export const invitaUtente = async (req: Request, res: Response) => {
       impiantoId,
       utenteEsistente?.id || null,
       email.toLowerCase(),
-      ruolo_condivisione,
+      accesso_completo,
       puo_controllare_dispositivi,
       puo_vedere_stato,
       stanze_abilitate ? JSON.stringify(stanze_abilitate) : null,
@@ -258,6 +289,9 @@ export const invitaUtente = async (req: Request, res: Response) => {
 
     const condivisioneId = result.insertId;
 
+    // Determina il tipo di accesso per il messaggio
+    const tipoAccesso = accesso_completo ? 'con accesso completo' : 'come ospite';
+
     // Se utente esiste, crea notifica in-app
     if (utenteEsistente) {
       // Crea notifica nel database
@@ -267,7 +301,7 @@ export const invitaUtente = async (req: Request, res: Response) => {
       `, [
         utenteEsistente.id,
         'Nuovo invito impianto',
-        `Sei stato invitato a gestire l'impianto "${impiantoNome}" come ${ruolo_condivisione}`
+        `Sei stato invitato all'impianto "${impiantoNome}" ${tipoAccesso}`
       ]);
 
       // Emit notifica via WebSocket
@@ -283,7 +317,7 @@ export const invitaUtente = async (req: Request, res: Response) => {
         await sendInviteEmail(
           email.toLowerCase(),
           impiantoNome,
-          ruolo_condivisione,
+          tipoAccesso,
           tokenInvito!
         );
         console.log(`📧 Email invito inviata a: ${email}`);
@@ -301,7 +335,7 @@ export const invitaUtente = async (req: Request, res: Response) => {
       WHERE c.id = ?
     `, [condivisioneId]) as RowDataPacket[];
 
-    console.log(`✅ Invito creato: ${email} -> impianto ${impiantoId} (${ruolo_condivisione})`);
+    console.log(`✅ Invito creato: ${email} -> impianto ${impiantoId} (${tipoAccesso})`);
 
     res.status(201).json({
       success: true,
@@ -340,7 +374,7 @@ export const modificaPermessi = async (req: Request, res: Response) => {
       puo_controllare_dispositivi,
       puo_vedere_stato,
       stanze_abilitate,
-      ruolo_condivisione
+      accesso_completo
     } = req.body;
 
     console.log(`📝 modificaPermessi chiamato: condivisioneId=${condivisioneId}, body=`, req.body);
@@ -385,9 +419,9 @@ export const modificaPermessi = async (req: Request, res: Response) => {
       updates.push('stanze_abilitate = ?');
       values.push(stanze_abilitate ? JSON.stringify(stanze_abilitate) : null);
     }
-    if (ruolo_condivisione !== undefined && ['installatore', 'ospite'].includes(ruolo_condivisione)) {
-      updates.push('ruolo_condivisione = ?');
-      values.push(ruolo_condivisione);
+    if (accesso_completo !== undefined) {
+      updates.push('accesso_completo = ?');
+      values.push(accesso_completo);
     }
 
     if (updates.length === 0) {
@@ -562,7 +596,7 @@ export const accettaInvito = async (req: Request, res: Response) => {
       message: `Hai accettato l'invito per l'impianto "${impianti[0]?.nome}"`,
       data: {
         impianto_id: condivisione.impianto_id,
-        ruolo_condivisione: condivisione.ruolo_condivisione
+        accesso_completo: condivisione.accesso_completo
       }
     });
   } catch (error) {
@@ -815,30 +849,18 @@ export const hasAccessToImpianto = async (
       puo_controllare_dispositivi: condivisione.puo_controllare_dispositivi,
       puo_vedere_stato: condivisione.puo_vedere_stato,
       stanze_abilitate: condivisione.stanze_abilitate,
-      ruolo_condivisione: condivisione.ruolo_condivisione
+      accesso_completo: condivisione.accesso_completo
     }
   };
 };
 
 // ============================================
 // HELPER: Verifica gerarchia permessi (chi può modificare chi)
-// - Admin può modificare: installatore, proprietario, ospite
-// - Installatore ORIGINALE può modificare: proprietario condiviso, ospite
-// - Proprietario ORIGINALE può modificare: ospite
-// - Ospite non può modificare nessuno
+// - Admin può modificare: qualsiasi condivisione
+// - Installatore ORIGINALE può modificare: qualsiasi condivisione
+// - Proprietario ORIGINALE può modificare: qualsiasi condivisione
+// - Utenti condivisi non possono modificare altre condivisioni
 // ============================================
-type RuoloCondivisione = 'installatore' | 'proprietario' | 'ospite';
-
-const GERARCHIA_RUOLI: Record<string, RuoloCondivisione[]> = {
-  admin: ['installatore', 'proprietario', 'ospite'],
-  installatore_originale: ['proprietario', 'ospite'],
-  proprietario_originale: ['ospite'],
-  // Utenti condivisi non possono modificare nessuno
-  installatore: [],
-  proprietario: [],
-  ospite: []
-};
-
 export const canModifyCondivisione = async (
   modifierUserId: number,
   modifierRuolo: UserRole,
@@ -861,35 +883,159 @@ export const canModifyCondivisione = async (
 
   const impianto = impianti[0];
 
-  // Determina il ruolo del modifier
-  let modifierRole: string;
+  // Installatore ORIGINALE può modificare qualsiasi condivisione
   if (impianto.installatore_id === modifierUserId) {
-    modifierRole = 'installatore_originale';
-  } else if (impianto.utente_id === modifierUserId) {
-    modifierRole = 'proprietario_originale';
-  } else {
-    // Cerca se è un utente condiviso
-    const modifierCondivisione = await query(`
-      SELECT ruolo_condivisione FROM condivisioni_impianto
-      WHERE impianto_id = ? AND utente_id = ? AND stato = 'accettato'
-    `, [condivisione.impianto_id, modifierUserId]) as RowDataPacket[];
+    return { canModify: true };
+  }
 
-    if (modifierCondivisione.length === 0) {
-      return { canModify: false, reason: 'Non hai accesso a questo impianto' };
+  // Proprietario ORIGINALE può modificare qualsiasi condivisione
+  if (impianto.utente_id === modifierUserId) {
+    return { canModify: true };
+  }
+
+  // Utenti condivisi non possono modificare altre condivisioni
+  return {
+    canModify: false,
+    reason: 'Solo il proprietario o l\'installatore originale possono modificare le condivisioni'
+  };
+};
+
+// ============================================
+// POST /api/impianti/:id/cedi-primario
+// Cede il ruolo di installatore primario a un altro installatore
+// Solo l'installatore ORIGINALE può cedere il ruolo
+// ============================================
+export const cediInstallatorePrimario = async (req: Request, res: Response) => {
+  try {
+    const { id: impiantoId } = req.params;
+    const userId = req.user!.userId;
+    const ruolo = req.user!.ruolo;
+    const { nuovo_installatore_id } = req.body;
+
+    // Solo installatori possono cedere il ruolo
+    if (ruolo !== UserRole.INSTALLATORE && ruolo !== UserRole.ADMIN) {
+      return res.status(403).json({
+        success: false,
+        error: 'Solo un installatore può cedere il ruolo primario'
+      });
     }
-    modifierRole = modifierCondivisione[0].ruolo_condivisione;
+
+    // Verifica che l'impianto esista e che l'utente sia l'installatore primario
+    const impianti = await query(
+      'SELECT id, nome, installatore_id FROM impianti WHERE id = ?',
+      [impiantoId]
+    ) as RowDataPacket[];
+
+    if (impianti.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Impianto non trovato'
+      });
+    }
+
+    const impianto = impianti[0];
+
+    // Verifica che l'utente corrente sia l'installatore primario
+    if (impianto.installatore_id !== userId && ruolo !== UserRole.ADMIN) {
+      return res.status(403).json({
+        success: false,
+        error: 'Solo l\'installatore primario può cedere il ruolo'
+      });
+    }
+
+    // Verifica che il nuovo installatore sia un utente condiviso con accesso completo
+    // e che sia effettivamente un installatore
+    const nuovoInstallatore = await query(`
+      SELECT
+        c.id as condivisione_id,
+        c.utente_id,
+        c.accesso_completo,
+        u.ruolo as tipo_account,
+        u.nome,
+        u.cognome
+      FROM condivisioni_impianto c
+      JOIN utenti u ON c.utente_id = u.id
+      WHERE c.impianto_id = ? AND c.utente_id = ? AND c.stato = 'accettato'
+    `, [impiantoId, nuovo_installatore_id]) as RowDataPacket[];
+
+    if (nuovoInstallatore.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Il nuovo installatore deve avere accesso all\'impianto'
+      });
+    }
+
+    const candidato = nuovoInstallatore[0];
+
+    // Verifica che sia un account installatore
+    if (candidato.tipo_account !== UserRole.INSTALLATORE) {
+      return res.status(400).json({
+        success: false,
+        error: 'Il nuovo installatore primario deve avere un account di tipo Installatore'
+      });
+    }
+
+    // Verifica che abbia accesso completo
+    if (!candidato.accesso_completo) {
+      return res.status(400).json({
+        success: false,
+        error: 'Il nuovo installatore primario deve avere accesso completo all\'impianto'
+      });
+    }
+
+    // Esegui la cessione in una transazione
+    // 1. Aggiorna l'installatore_id dell'impianto
+    await query(
+      'UPDATE impianti SET installatore_id = ? WHERE id = ?',
+      [nuovo_installatore_id, impiantoId]
+    );
+
+    // 2. Rimuovi la condivisione del nuovo installatore (ora è primario)
+    await query(
+      'DELETE FROM condivisioni_impianto WHERE id = ?',
+      [candidato.condivisione_id]
+    );
+
+    // 3. Crea una condivisione per il vecchio installatore primario
+    await query(`
+      INSERT INTO condivisioni_impianto (
+        impianto_id, utente_id, email_invitato, accesso_completo,
+        puo_controllare_dispositivi, puo_vedere_stato, stanze_abilitate,
+        invitato_da, stato, accettato_il
+      )
+      SELECT
+        ?, ?, email, TRUE, TRUE, TRUE, NULL, ?, 'accettato', NOW()
+      FROM utenti WHERE id = ?
+    `, [impiantoId, userId, nuovo_installatore_id, userId]);
+
+    // Notifica al nuovo installatore primario
+    emitNotificationToUser(nuovo_installatore_id, {
+      tipo: 'ruolo-primario',
+      titolo: 'Nuovo ruolo: Installatore Primario',
+      messaggio: `Sei diventato l'installatore primario dell'impianto "${impianto.nome}"`
+    });
+
+    // Notifica al vecchio installatore
+    await query(`
+      INSERT INTO notifiche (utente_id, tipo, titolo, messaggio, letta)
+      VALUES (?, 'info', ?, ?, false)
+    `, [
+      userId,
+      'Ruolo ceduto',
+      `Hai ceduto il ruolo di installatore primario dell'impianto "${impianto.nome}" a ${candidato.nome} ${candidato.cognome}`
+    ]);
+
+    console.log(`🔄 Installatore primario ceduto: impianto ${impiantoId}, da ${userId} a ${nuovo_installatore_id}`);
+
+    res.json({
+      success: true,
+      message: `Ruolo di installatore primario ceduto a ${candidato.nome} ${candidato.cognome}`
+    });
+  } catch (error) {
+    console.error('Errore cediInstallatorePrimario:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Errore durante la cessione del ruolo'
+    });
   }
-
-  // Verifica se può modificare il ruolo target
-  const ruoliModificabili = GERARCHIA_RUOLI[modifierRole] || [];
-  const targetRuolo = condivisione.ruolo_condivisione;
-
-  if (!ruoliModificabili.includes(targetRuolo)) {
-    return {
-      canModify: false,
-      reason: `Un ${modifierRole.replace('_', ' ')} non può modificare un ${targetRuolo}`
-    };
-  }
-
-  return { canModify: true };
 };

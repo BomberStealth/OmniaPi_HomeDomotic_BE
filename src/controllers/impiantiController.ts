@@ -497,7 +497,7 @@ export const getCondivisioni = async (req: Request, res: Response) => {
       `SELECT
        c.id,
        c.email_invitato as email,
-       c.ruolo_condivisione as ruolo,
+       c.accesso_completo,
        c.stato,
        c.creato_il
        FROM condivisioni_impianto c
@@ -608,10 +608,12 @@ export const connectImpianto = async (req: Request, res: Response) => {
     }
 
     // Crea condivisione diretta (già accettata perché tramite codice)
+    // accesso_completo = FALSE per codice condivisione (ospite)
     await query(
       `INSERT INTO condivisioni_impianto
-       (impianto_id, utente_id, email_invitato, ruolo_condivisione, stato, invitato_da, accettato_il)
-       VALUES (?, ?, ?, 'ospite', 'accettato', ?, NOW())`,
+       (impianto_id, utente_id, email_invitato, accesso_completo, stato, invitato_da, accettato_il,
+        puo_controllare_dispositivi, puo_vedere_stato)
+       VALUES (?, ?, ?, FALSE, 'accettato', ?, NOW(), TRUE, TRUE)`,
       [impianto.id, utente_id, email_utente, utente_id]
     );
 

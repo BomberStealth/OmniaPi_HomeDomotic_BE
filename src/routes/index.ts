@@ -20,6 +20,7 @@ import * as sessionsController from '../controllers/sessionsController';
 import * as condivisioniController from '../controllers/condivisioniController';
 import deviceRoutes from './deviceRoutes';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
+import { requireDeviceControl } from '../middleware/impiantoAccess';
 // RATE LIMITING DISABILITATO - causava blocchi ingiustificati
 // import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
 import { validate, loginSchema, registerSchema } from '../middleware/validation';
@@ -98,6 +99,8 @@ router.delete('/condivisioni/:id', authMiddleware, condivisioniController.rimuov
 router.post('/condivisioni/:id/accetta', authMiddleware, condivisioniController.accettaInvito);
 router.post('/condivisioni/:id/rifiuta', authMiddleware, condivisioniController.rifiutaInvito);
 router.get('/inviti/pendenti', authMiddleware, condivisioniController.getInvitiPendenti);
+// Cessione ruolo installatore primario
+router.post('/impianti/:id/cedi-primario', authMiddleware, condivisioniController.cediInstallatorePrimario);
 
 // ============================================
 // SCENE ROUTES
@@ -107,7 +110,7 @@ router.post('/impianti/:impiantoId/scene', authMiddleware, sceneController.creat
 router.post('/impianti/:impiantoId/scene/auto-populate', authMiddleware, sceneController.autoPopulateDefaultScenes);
 router.put('/scene/:id', authMiddleware, sceneController.updateScena);
 router.delete('/scene/:id', authMiddleware, sceneController.deleteScena);
-router.post('/scene/:id/execute', authMiddleware, sceneController.executeScena);
+router.post('/scene/:id/execute', authMiddleware, requireDeviceControl, sceneController.executeScena);
 router.put('/scene/:id/shortcut', authMiddleware, sceneController.toggleShortcut);
 
 // ============================================
@@ -146,7 +149,7 @@ router.post('/impianti/:impiantoId/dispositivi/scan', authMiddleware, tasmotaCon
 router.post('/impianti/:impiantoId/dispositivi', authMiddleware, tasmotaController.addDispositivo);
 router.delete('/dispositivi/:id', authMiddleware, tasmotaController.deleteDispositivo);
 router.put('/dispositivi/:id/stanza', authMiddleware, tasmotaController.updateStanzaDispositivo);
-router.post('/dispositivi/:id/control', authMiddleware, tasmotaController.controlDispositivo);
+router.post('/dispositivi/:id/control', authMiddleware, requireDeviceControl, tasmotaController.controlDispositivo);
 router.put('/dispositivi/:id/blocco', authMiddleware, tasmotaController.toggleBloccaDispositivo);
 router.put('/dispositivi/:id/nome', authMiddleware, tasmotaController.renameDispositivo);
 router.post('/dispositivi/trovami', authMiddleware, tasmotaController.trovamiDispositivo);
@@ -240,7 +243,7 @@ router.get('/impianti/:impiantoId/omniapi/available', authMiddleware, omniapiCon
 router.post('/impianti/:impiantoId/omniapi/register', authMiddleware, omniapiController.registerNode);
 router.delete('/omniapi/nodes/:id', authMiddleware, omniapiController.unregisterNode);
 router.put('/omniapi/nodes/:id', authMiddleware, omniapiController.updateRegisteredNode);
-router.post('/omniapi/nodes/:id/control', authMiddleware, omniapiController.controlRegisteredNode);
+router.post('/omniapi/nodes/:id/control', authMiddleware, requireDeviceControl, omniapiController.controlRegisteredNode);
 
 // ============================================
 // LED STRIP ROUTES (OmniaPi LED Strip devices)
