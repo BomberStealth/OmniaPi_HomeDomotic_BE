@@ -111,3 +111,99 @@ export const requireImpiantoOwner = async (
     });
   }
 };
+
+/**
+ * Middleware che verifica che l'utente abbia il permesso di controllare i dispositivi
+ * Se proprietario/admin/installatore originale → sempre OK
+ * Se condiviso → controlla puo_controllare_dispositivi
+ */
+export const requireDeviceControl = async (
+  req: ImpiantoAccessRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const impiantoId = req.params.impiantoId || req.params.id || req.body.impiantoId;
+    const userId = req.user?.userId;
+    const ruolo = req.user?.ruolo;
+
+    if (!impiantoId) {
+      return res.status(400).json({
+        success: false,
+        error: 'ID impianto richiesto'
+      });
+    }
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Autenticazione richiesta'
+      });
+    }
+
+    // Admin ha sempre accesso
+    if (ruolo === 'admin') {
+      return next();
+    }
+
+    // Verifica se è proprietario
+    const impianti = await query(
+      'SELECT * FROM impianti WHERE id = ? AND utente_id = ?',
+      [impiantoId, userId]
+    ) as RowDataPacket[];
+
+    if (impianti.length > 0) {
+      // Proprietario ha sempre controllo
+      req.impianto = impianti[0];
+      return next();
+    }
+
+    // Verifica se è installatore originale
+    const impiantoInstallatore = await query(
+      'SELECT * FROM impianti WHERE id = ? AND installatore_id = ?',
+      [impiantoId, userId]
+    ) as RowDataPacket[];
+
+    if (impiantoInstallatore.length > 0) {
+      // Installatore originale ha sempre controllo
+      req.impianto = impiantoInstallatore[0];
+      return next();
+    }
+
+    // Verifica condivisione
+    const condivisioni = await query(
+      `SELECT c.*, i.* FROM condivisioni_impianto c
+       JOIN impianti i ON c.impianto_id = i.id
+       WHERE c.impianto_id = ? AND c.utente_id = ? AND c.stato = 'accettato'
+       LIMIT 1`,
+      [impiantoId, userId]
+    ) as RowDataPacket[];
+
+    if (condivisioni.length === 0) {
+      return res.status(403).json({
+        success: false,
+        error: 'Accesso negato'
+      });
+    }
+
+    const condivisione = condivisioni[0];
+
+    // Verifica permesso controllo dispositivi
+    if (!condivisione.puo_controllare_dispositivi) {
+      return res.status(403).json({
+        success: false,
+        error: 'Non hai i permessi per controllare i dispositivi',
+        code: 'NO_DEVICE_CONTROL'
+      });
+    }
+
+    req.impianto = condivisione;
+    next();
+  } catch (error) {
+    console.error('Errore verifica permesso controllo:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Errore durante la verifica dei permessi'
+    });
+  }
+};

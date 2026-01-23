@@ -80,6 +80,7 @@ export const getNodeByMac = async (req: AuthRequest, res: Response) => {
  * Body: { node_mac: string, channel: number, action: "on"|"off"|"toggle" }
  */
 export const sendCommand = async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
   try {
     const { node_mac, channel, action } = req.body;
 
@@ -97,7 +98,10 @@ export const sendCommand = async (req: AuthRequest, res: Response) => {
     }
 
     // Verifica che il nodo esista
+    const nodeCheckStart = Date.now();
     const node = getNode(node_mac);
+    console.log(`⏱️ [TIMING] getNode: ${Date.now() - nodeCheckStart}ms`);
+
     if (!node) {
       return res.status(404).json({ error: 'Nodo non trovato. Attendere la discovery.' });
     }
@@ -107,14 +111,20 @@ export const sendCommand = async (req: AuthRequest, res: Response) => {
     }
 
     // Invia comando via MQTT
+    const mqttStart = Date.now();
     omniapiCommand(node_mac, channel, action as 'on' | 'off' | 'toggle');
+    console.log(`⏱️ [TIMING] MQTT publish: ${Date.now() - mqttStart}ms`);
+
+    const totalTime = Date.now() - startTime;
+    console.log(`⏱️ [TIMING] sendCommand TOTAL: ${totalTime}ms`);
 
     res.json({
       success: true,
       message: `Comando inviato: ${node_mac} ch${channel} ${action}`,
       node_mac,
       channel,
-      action
+      action,
+      timing_ms: totalTime
     });
   } catch (error) {
     console.error('Errore sendCommand:', error);
@@ -195,22 +205,26 @@ export const testNode = async (req: AuthRequest, res: Response) => {
  * Restituisce i nodi OmniaPi registrati per un impianto (dal DB)
  */
 export const getRegisteredNodes = async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
   try {
     const { impiantoId } = req.params;
 
     // Verifica accesso all'impianto
+    const accessCheckStart = Date.now();
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
       [impiantoId, req.user!.userId, req.user!.userId]
     );
+    console.log(`⏱️ [TIMING] Access check query: ${Date.now() - accessCheckStart}ms`);
 
     if (!impianti || impianti.length === 0) {
       return res.status(404).json({ error: 'Impianto non trovato' });
     }
 
     // Recupera dispositivi OmniaPi dal DB
+    const devicesQueryStart = Date.now();
     const dispositivi: any = await query(
       `SELECT d.*, s.nome as stanza_nome
        FROM dispositivi d
@@ -219,8 +233,10 @@ export const getRegisteredNodes = async (req: AuthRequest, res: Response) => {
        ORDER BY d.nome ASC`,
       [impiantoId]
     );
+    console.log(`⏱️ [TIMING] Devices query: ${Date.now() - devicesQueryStart}ms`);
 
     // Arricchisci con stato real-time dalla memoria
+    const enrichStart = Date.now();
     const nodesWithState = (dispositivi || []).map((d: any) => {
       const liveNode = getNode(d.mac_address);
       return {
@@ -236,10 +252,15 @@ export const getRegisteredNodes = async (req: AuthRequest, res: Response) => {
         lastSeen: liveNode?.lastSeen ?? d.aggiornato_il
       };
     });
+    console.log(`⏱️ [TIMING] State enrichment: ${Date.now() - enrichStart}ms`);
+
+    const totalTime = Date.now() - startTime;
+    console.log(`⏱️ [TIMING] getRegisteredNodes TOTAL: ${totalTime}ms (${nodesWithState.length} nodes)`);
 
     res.json({
       nodes: nodesWithState,
-      count: nodesWithState.length
+      count: nodesWithState.length,
+      timing_ms: totalTime
     });
   } catch (error) {
     console.error('Errore getRegisteredNodes:', error);
@@ -555,6 +576,7 @@ export const updateRegisteredNode = async (req: AuthRequest, res: Response) => {
  * Body: { channel: 1|2, action: "on"|"off"|"toggle" }
  */
 export const controlRegisteredNode = async (req: AuthRequest, res: Response) => {
+  const startTime = Date.now();
   try {
     const { id } = req.params;
     const { channel, action } = req.body;
@@ -569,6 +591,7 @@ export const controlRegisteredNode = async (req: AuthRequest, res: Response) => 
     }
 
     // Verifica che il dispositivo esista e sia un nodo OmniaPi
+    const dbQueryStart = Date.now();
     const dispositivi: any = await query(
       `SELECT d.* FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
@@ -577,6 +600,7 @@ export const controlRegisteredNode = async (req: AuthRequest, res: Response) => 
        AND (i.utente_id = ? OR c.utente_id = ?)`,
       [id, req.user!.userId, req.user!.userId]
     );
+    console.log(`⏱️ [TIMING] DB device lookup: ${Date.now() - dbQueryStart}ms`);
 
     if (!dispositivi || dispositivi.length === 0) {
       return res.status(404).json({ error: 'Nodo non trovato' });
@@ -586,20 +610,29 @@ export const controlRegisteredNode = async (req: AuthRequest, res: Response) => 
     const mac = dispositivo.mac_address;
 
     // Verifica che il nodo sia online
+    const nodeCheckStart = Date.now();
     const liveNode = getNode(mac);
+    console.log(`⏱️ [TIMING] getNode (memory): ${Date.now() - nodeCheckStart}ms`);
+
     if (!liveNode?.online) {
       return res.status(503).json({ error: 'Nodo offline' });
     }
 
     // Invia comando via MQTT
+    const mqttStart = Date.now();
     omniapiCommand(mac, channel, action as 'on' | 'off' | 'toggle');
+    console.log(`⏱️ [TIMING] MQTT publish: ${Date.now() - mqttStart}ms`);
+
+    const totalTime = Date.now() - startTime;
+    console.log(`⏱️ [TIMING] controlRegisteredNode TOTAL: ${totalTime}ms`);
 
     res.json({
       success: true,
       message: `Comando inviato: ${dispositivo.nome} ch${channel} ${action}`,
       dispositivo_id: id,
       channel,
-      action
+      action,
+      timing_ms: totalTime
     });
   } catch (error) {
     console.error('Errore controlRegisteredNode:', error);

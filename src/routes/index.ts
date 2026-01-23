@@ -110,7 +110,8 @@ router.post('/impianti/:impiantoId/scene', authMiddleware, sceneController.creat
 router.post('/impianti/:impiantoId/scene/auto-populate', authMiddleware, sceneController.autoPopulateDefaultScenes);
 router.put('/scene/:id', authMiddleware, sceneController.updateScena);
 router.delete('/scene/:id', authMiddleware, sceneController.deleteScena);
-router.post('/scene/:id/execute', authMiddleware, requireDeviceControl, sceneController.executeScena);
+// Note: executeScena ha già controllo accessi interno (righe 225-234)
+router.post('/scene/:id/execute', authMiddleware, sceneController.executeScena);
 router.put('/scene/:id/shortcut', authMiddleware, sceneController.toggleShortcut);
 
 // ============================================
@@ -149,7 +150,8 @@ router.post('/impianti/:impiantoId/dispositivi/scan', authMiddleware, tasmotaCon
 router.post('/impianti/:impiantoId/dispositivi', authMiddleware, tasmotaController.addDispositivo);
 router.delete('/dispositivi/:id', authMiddleware, tasmotaController.deleteDispositivo);
 router.put('/dispositivi/:id/stanza', authMiddleware, tasmotaController.updateStanzaDispositivo);
-router.post('/dispositivi/:id/control', authMiddleware, requireDeviceControl, tasmotaController.controlDispositivo);
+// Note: controlDispositivo ha già controllo accessi interno (righe 428-439)
+router.post('/dispositivi/:id/control', authMiddleware, tasmotaController.controlDispositivo);
 router.put('/dispositivi/:id/blocco', authMiddleware, tasmotaController.toggleBloccaDispositivo);
 router.put('/dispositivi/:id/nome', authMiddleware, tasmotaController.renameDispositivo);
 router.post('/dispositivi/trovami', authMiddleware, tasmotaController.trovamiDispositivo);
@@ -243,7 +245,8 @@ router.get('/impianti/:impiantoId/omniapi/available', authMiddleware, omniapiCon
 router.post('/impianti/:impiantoId/omniapi/register', authMiddleware, omniapiController.registerNode);
 router.delete('/omniapi/nodes/:id', authMiddleware, omniapiController.unregisterNode);
 router.put('/omniapi/nodes/:id', authMiddleware, omniapiController.updateRegisteredNode);
-router.post('/omniapi/nodes/:id/control', authMiddleware, requireDeviceControl, omniapiController.controlRegisteredNode);
+// Note: controlRegisteredNode ha già controllo accessi interno (righe 595-606)
+router.post('/omniapi/nodes/:id/control', authMiddleware, omniapiController.controlRegisteredNode);
 
 // ============================================
 // LED STRIP ROUTES (OmniaPi LED Strip devices)

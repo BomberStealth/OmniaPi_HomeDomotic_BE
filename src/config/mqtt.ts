@@ -45,6 +45,7 @@ let mqttClient: mqtt.MqttClient | null = null;
 
 // Handler per aggiornare lo stato dispositivo nel database
 const handleMqttMessage = async (topic: string, message: Buffer) => {
+  const messageStart = Date.now();
   console.log(`📨 MQTT: ${topic} - ${message.toString().substring(0, 100)}`);
 
   // ======================
@@ -194,6 +195,7 @@ export const tasmotaCommand = (topic: string, command: string, value?: any) => {
 // ============================================
 
 const handleOmniapiMessage = async (topic: string, message: Buffer) => {
+  const messageStart = Date.now();
   const payload = message.toString();
   console.log(`📡 OmniaPi MQTT: ${topic}`);
 
@@ -202,9 +204,11 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
     // omniapi/led/state (LED Strip state updates)
     if (topic === 'omniapi/led/state') {
+      console.log(`⏱️ [TIMING-LED] State update received at +${Date.now() - messageStart}ms`);
       console.log('📡 MQTT LED state:', data);
 
       // Update state in memory store
+      const stateUpdateStart = Date.now();
       const ledState = updateLedState(data.mac, {
         power: data.power,
         r: data.r,
@@ -214,9 +218,13 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
         effect: data.effect,
         online: true
       });
+      console.log(`⏱️ [TIMING-LED] Memory update: ${Date.now() - stateUpdateStart}ms`);
 
       // Emit WebSocket event
+      const wsEmitStart = Date.now();
       emitOmniapiLedUpdate(ledState);
+      console.log(`⏱️ [TIMING-LED] WebSocket emit: ${Date.now() - wsEmitStart}ms`);
+      console.log(`⏱️ [TIMING-LED] Total processing: ${Date.now() - messageStart}ms`);
       return;
     }
 
@@ -262,12 +270,13 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       emitOmniapiGatewayUpdate(gateway);
 
       // Registra/aggiorna gateway nel database
-      if (data.mac) {
+      // Usa MAC se disponibile, altrimenti cerca per IP
+      if (data.mac || data.ip) {
         await updateGatewayFromMqtt(
-          data.mac,
+          data.mac,  // può essere undefined
           data.ip,
           data.version,
-          data.node_count ?? data.nodeCount
+          data.nodes_count ?? data.node_count ?? data.nodeCount
         );
       }
       return;
@@ -283,6 +292,11 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
         // Relay: firmwareId 0x01 (1) o 0x02 (2)
         const relayNodes = data.nodes.filter((n: any) => isRelayFirmwareId(n.deviceType));
         const ledNodes = data.nodes.filter((n: any) => isLedFirmwareId(n.deviceType));
+
+        // FIX: Aggiorna node_count nel gateway quando riceviamo la lista nodi
+        if (data.gateway_mac) {
+          await updateGatewayFromMqtt(data.gateway_mac, undefined, undefined, data.nodes.length);
+        }
 
         console.log(`📡 [DEBUG] Filtered: ${relayNodes.length} relay nodes, ${ledNodes.length} LED strips`);
 
@@ -333,23 +347,33 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       const relay2 = parseRelay(data.relay2);
 
       console.log(`📡 [DEBUG] Node state received: MAC=${mac}, raw={relay1:${data.relay1}, relay2:${data.relay2}}, parsed={relay1:${relay1}, relay2:${relay2}}`);
+      console.log(`⏱️ [TIMING] Node state message processing started at +${Date.now() - messageStart}ms`);
 
+      const stateUpdateStart = Date.now();
       const nodeUpdate = updateNodeState(mac, {
         relay1,
         relay2,
         online: data.online ?? true,
         rssi: data.rssi
       });
+      console.log(`⏱️ [TIMING] Memory state update: ${Date.now() - stateUpdateStart}ms`);
+
       if (nodeUpdate) {
+        const wsEmitStart = Date.now();
         console.log(`📡 [DEBUG] Emitting node update:`, JSON.stringify(nodeUpdate));
         emitOmniapiNodeUpdate(nodeUpdate);
+        console.log(`⏱️ [TIMING] WebSocket emit: ${Date.now() - wsEmitStart}ms`);
+
         // Sync stato al database
+        const dbSyncStart = Date.now();
         await syncNodeStateToDatabase(mac, {
           relay1,
           relay2,
           rssi: data.rssi,
           online: data.online ?? true
         });
+        console.log(`⏱️ [TIMING] DB sync: ${Date.now() - dbSyncStart}ms`);
+        console.log(`⏱️ [TIMING] Node state TOTAL processing: ${Date.now() - messageStart}ms`);
       } else {
         console.log(`⚠️ [DEBUG] Node update returned null for MAC=${mac}`);
       }
@@ -445,6 +469,7 @@ const syncNodeStateToDatabase = async (mac: string, state: {
 // ============================================
 
 export const omniapiCommand = (nodeMac: string, channel: number, action: 'on' | 'off' | 'toggle') => {
+  const commandStart = Date.now();
   const client = getMQTTClient();
   const payload = JSON.stringify({
     node_mac: nodeMac,
@@ -452,6 +477,13 @@ export const omniapiCommand = (nodeMac: string, channel: number, action: 'on' | 
     action
   });
   console.log(`📡 [DEBUG] Sending MQTT command: topic=omniapi/gateway/command, payload=${payload}`);
-  client.publish('omniapi/gateway/command', payload);
+  client.publish('omniapi/gateway/command', payload, (err) => {
+    const publishTime = Date.now() - commandStart;
+    if (err) {
+      console.error(`⏱️ [TIMING] MQTT publish ERROR after ${publishTime}ms:`, err);
+    } else {
+      console.log(`⏱️ [TIMING] MQTT publish confirmed: ${publishTime}ms`);
+    }
+  });
   console.log(`📡 OmniaPi command sent: ${nodeMac} ch${channel} ${action}`);
 };

@@ -6,6 +6,7 @@ import { connectMQTT } from './config/mqtt';
 import { initializeSocket } from './socket';
 import { loadAllSchedules } from './services/sceneScheduler';
 import { checkConditionalScenes } from './services/conditionsEngine';
+import { startNodeHealthCheck } from './services/nodeHealthCheck';
 import { runOmniapiMigration } from './utils/migrate-omniapi';
 import { initSessionsTable, cleanupExpiredSessions } from './controllers/sessionsController';
 import logger from './config/logger';
@@ -46,6 +47,9 @@ const startServer = async () => {
     setInterval(() => {
       checkConditionalScenes();
     }, 60000); // Ogni 60 secondi
+
+    // Avvia node health check (rileva nodi offline)
+    startNodeHealthCheck();
 
     // Crea HTTP server
     const httpServer = http.createServer(app);

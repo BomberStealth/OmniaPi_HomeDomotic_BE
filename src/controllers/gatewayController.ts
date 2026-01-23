@@ -157,9 +157,10 @@ export const getImpiantoGateway = async (req: AuthRequest, res: Response) => {
 
     const gateway = gateways[0];
 
-    // Calcola se è online (last_seen negli ultimi 2 minuti)
-    const isOnline = gateway.last_seen &&
-      (new Date().getTime() - new Date(gateway.last_seen).getTime()) < 120000;
+    // Usa il campo status dal DB (già aggiornato via MQTT) invece del calcolo basato su last_seen
+    // Il campo status viene settato a 'online' da updateGatewayFromMqtt quando riceve messaggi
+    // Questo evita problemi di timezone tra MySQL NOW() (UTC) e JavaScript Date (locale)
+    const isOnline = gateway.status === 'online' && gateway.mqtt_connected;
 
     res.json({
       gateway: {
@@ -370,24 +371,42 @@ export const updateGateway = async (req: AuthRequest, res: Response) => {
 
 /**
  * Aggiorna stato gateway da MQTT
+ * Può cercare per MAC o IP
  */
 export const updateGatewayFromMqtt = async (
-  mac: string,
+  mac: string | undefined,
   ip?: string,
   version?: string,
   nodeCount?: number
 ): Promise<void> => {
   try {
-    const normalizedMac = mac.toUpperCase().replace(/-/g, ':');
+    let existing: any = null;
+    let normalizedMac: string | undefined;
 
-    // Verifica se esiste
-    const existing: any = await query(
-      'SELECT id, impianto_id FROM gateways WHERE mac_address = ?',
-      [normalizedMac]
-    );
+    // Prima prova a cercare per MAC (se fornito)
+    if (mac) {
+      normalizedMac = mac.toUpperCase().replace(/-/g, ':');
+      existing = await query(
+        'SELECT id, impianto_id, mac_address FROM gateways WHERE mac_address = ?',
+        [normalizedMac]
+      );
+    }
+
+    // Se non trovato per MAC, cerca per IP (fallback)
+    if ((!existing || existing.length === 0) && ip) {
+      existing = await query(
+        'SELECT id, impianto_id, mac_address FROM gateways WHERE ip_address = ?',
+        [ip]
+      );
+      if (existing && existing.length > 0) {
+        normalizedMac = existing[0].mac_address;
+        console.log(`📡 Gateway trovato per IP ${ip} → MAC: ${normalizedMac}`);
+      }
+    }
 
     if (existing && existing.length > 0) {
       // Aggiorna
+      const gatewayMac = normalizedMac || existing[0].mac_address;
       await query(
         `UPDATE gateways
          SET ip_address = COALESCE(?, ip_address),
@@ -397,10 +416,10 @@ export const updateGatewayFromMqtt = async (
              last_seen = NOW(),
              mqtt_connected = TRUE
          WHERE mac_address = ?`,
-        [ip, version, nodeCount, normalizedMac]
+        [ip, version, nodeCount, gatewayMac]
       );
-    } else {
-      // Crea nuovo (in stato pending)
+    } else if (normalizedMac) {
+      // Crea nuovo solo se abbiamo un MAC (in stato pending)
       await query(
         `INSERT INTO gateways (mac_address, ip_address, firmware_version, node_count, status, last_seen, mqtt_connected)
          VALUES (?, ?, ?, ?, 'pending', NOW(), TRUE)`,
@@ -535,3 +554,4 @@ export const resetGateway = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: 'Errore durante il reset del gateway' });
   }
 };
+

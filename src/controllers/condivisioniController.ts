@@ -238,6 +238,19 @@ export const invitaUtente = async (req: Request, res: Response) => {
 
     const impiantoNome = impianti[0].nome;
 
+    // Verifica che l'utente non stia invitando se stesso
+    const currentUser = await query(
+      'SELECT email FROM utenti WHERE id = ?',
+      [userId]
+    ) as RowDataPacket[];
+
+    if (currentUser.length > 0 && currentUser[0].email.toLowerCase() === email.toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Non puoi invitare te stesso'
+      });
+    }
+
     // Verifica che non esista già una condivisione per questa email
     const esistenti = await query(
       'SELECT id FROM condivisioni_impianto WHERE impianto_id = ? AND email_invitato = ?',
@@ -843,12 +856,26 @@ export const hasAccessToImpianto = async (
 
   const condivisione = condivisioni[0];
 
+  // Parsa stanze_abilitate - MySQL lo salva come stringa JSON
+  let stanzeAbilitate: number[] | null = null;
+  if (condivisione.stanze_abilitate) {
+    if (typeof condivisione.stanze_abilitate === 'string') {
+      try {
+        stanzeAbilitate = JSON.parse(condivisione.stanze_abilitate);
+      } catch {
+        stanzeAbilitate = null;
+      }
+    } else if (Array.isArray(condivisione.stanze_abilitate)) {
+      stanzeAbilitate = condivisione.stanze_abilitate;
+    }
+  }
+
   return {
     hasAccess: true,
     permissions: {
       puo_controllare_dispositivi: condivisione.puo_controllare_dispositivi,
       puo_vedere_stato: condivisione.puo_vedere_stato,
-      stanze_abilitate: condivisione.stanze_abilitate,
+      stanze_abilitate: stanzeAbilitate,
       accesso_completo: condivisione.accesso_completo
     }
   };

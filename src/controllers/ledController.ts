@@ -18,8 +18,11 @@ const MQTT_LED_COMMAND = 'omniapi/led/command';
  * Body: { mac, action, r?, g?, b?, brightness?, effect?, speed? }
  */
 export const sendLedCommand = async (req: Request, res: Response) => {
+  const startTime = Date.now();
   try {
     const { mac, action, r, g, b, brightness, effect, speed } = req.body;
+
+    console.log(`⏱️ [TIMING-LED] Command received: mac=${mac}, action=${action}`);
 
     if (!mac || !action) {
       return res.status(400).json({ error: 'mac and action required' });
@@ -95,11 +98,18 @@ export const sendLedCommand = async (req: Request, res: Response) => {
     }
 
     // Publish MQTT command
+    const mqttStart = Date.now();
     const mqttClient = getMQTTClient();
-    mqttClient.publish(MQTT_LED_COMMAND, JSON.stringify(payload));
+    mqttClient.publish(MQTT_LED_COMMAND, JSON.stringify(payload), (err) => {
+      const publishTime = Date.now() - mqttStart;
+      console.log(`⏱️ [TIMING-LED] MQTT publish confirmed: ${publishTime}ms`);
+    });
     console.log('📤 LED command sent:', payload);
 
-    res.json({ success: true, payload });
+    const totalTime = Date.now() - startTime;
+    console.log(`⏱️ [TIMING-LED] sendLedCommand TOTAL: ${totalTime}ms`);
+
+    res.json({ success: true, payload, timing_ms: totalTime });
   } catch (error) {
     console.error('LED command error:', error);
     res.status(500).json({ error: 'Internal server error' });
