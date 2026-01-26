@@ -20,7 +20,7 @@ import * as sessionsController from '../controllers/sessionsController';
 import * as condivisioniController from '../controllers/condivisioniController';
 import deviceRoutes from './deviceRoutes';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
-import { requireDeviceControl } from '../middleware/impiantoAccess';
+import { requireImpiantoAccess, requireDeviceControl, requireStanzaAccess } from '../middleware/impiantoAccess';
 // RATE LIMITING DISABILITATO - causava blocchi ingiustificati
 // import { loginLimiter, registerLimiter } from '../middleware/rateLimiters';
 import { validate, loginSchema, registerSchema } from '../middleware/validation';
@@ -105,12 +105,12 @@ router.post('/impianti/:id/cedi-primario', authMiddleware, condivisioniControlle
 // ============================================
 // SCENE ROUTES
 // ============================================
-router.get('/impianti/:impiantoId/scene', authMiddleware, sceneController.getScene);
-router.post('/impianti/:impiantoId/scene', authMiddleware, sceneController.createScena);
-router.post('/impianti/:impiantoId/scene/auto-populate', authMiddleware, sceneController.autoPopulateDefaultScenes);
+router.get('/impianti/:impiantoId/scene', authMiddleware, requireImpiantoAccess, sceneController.getScene);
+router.post('/impianti/:impiantoId/scene', authMiddleware, requireDeviceControl, sceneController.createScena);
+router.post('/impianti/:impiantoId/scene/auto-populate', authMiddleware, requireDeviceControl, sceneController.autoPopulateDefaultScenes);
 router.put('/scene/:id', authMiddleware, sceneController.updateScena);
 router.delete('/scene/:id', authMiddleware, sceneController.deleteScena);
-// Note: executeScena ha già controllo accessi interno (righe 225-234)
+// Note: executeScena ha già controllo accessi interno
 router.post('/scene/:id/execute', authMiddleware, sceneController.executeScena);
 router.put('/scene/:id/shortcut', authMiddleware, sceneController.toggleShortcut);
 
@@ -135,22 +135,22 @@ router.get('/impianti/:impiantoId/presence', authMiddleware, geofenceController.
 // ============================================
 // STANZE ROUTES
 // ============================================
-router.get('/impianti/:impiantoId/stanze', authMiddleware, stanzeController.getStanze);
-router.post('/impianti/:impiantoId/stanze', authMiddleware, stanzeController.createStanza);
-router.put('/stanze/:id', authMiddleware, stanzeController.updateStanza);
-router.delete('/stanze/:id', authMiddleware, stanzeController.deleteStanza);
+router.get('/impianti/:impiantoId/stanze', authMiddleware, requireImpiantoAccess, stanzeController.getStanze);
+router.post('/impianti/:impiantoId/stanze', authMiddleware, requireDeviceControl, stanzeController.createStanza);
+router.put('/stanze/:id', authMiddleware, requireStanzaAccess, stanzeController.updateStanza);
+router.delete('/stanze/:id', authMiddleware, requireStanzaAccess, stanzeController.deleteStanza);
 
 // ============================================
 // DISPOSITIVI TASMOTA ROUTES
 // ============================================
 // Tutti i dispositivi (Tasmota + OmniaPi) - per Scene e Stanze
-router.get('/impianti/:impiantoId/dispositivi/all', authMiddleware, dispositiviController.getAllDispositivi);
-router.get('/impianti/:impiantoId/dispositivi', authMiddleware, tasmotaController.getDispositivi);
-router.post('/impianti/:impiantoId/dispositivi/scan', authMiddleware, tasmotaController.scanTasmota);
-router.post('/impianti/:impiantoId/dispositivi', authMiddleware, tasmotaController.addDispositivo);
+router.get('/impianti/:impiantoId/dispositivi/all', authMiddleware, requireImpiantoAccess, dispositiviController.getAllDispositivi);
+router.get('/impianti/:impiantoId/dispositivi', authMiddleware, requireImpiantoAccess, tasmotaController.getDispositivi);
+router.post('/impianti/:impiantoId/dispositivi/scan', authMiddleware, requireDeviceControl, tasmotaController.scanTasmota);
+router.post('/impianti/:impiantoId/dispositivi', authMiddleware, requireDeviceControl, tasmotaController.addDispositivo);
 router.delete('/dispositivi/:id', authMiddleware, tasmotaController.deleteDispositivo);
 router.put('/dispositivi/:id/stanza', authMiddleware, tasmotaController.updateStanzaDispositivo);
-// Note: controlDispositivo ha già controllo accessi interno (righe 428-439)
+// Note: controlDispositivo ha già controllo accessi interno
 router.post('/dispositivi/:id/control', authMiddleware, tasmotaController.controlDispositivo);
 router.put('/dispositivi/:id/blocco', authMiddleware, tasmotaController.toggleBloccaDispositivo);
 router.put('/dispositivi/:id/nome', authMiddleware, tasmotaController.renameDispositivo);
@@ -159,8 +159,8 @@ router.post('/dispositivi/trovami', authMiddleware, tasmotaController.trovamiDis
 // ============================================
 // SENSOR ROUTES (DHT22, BME280, etc.)
 // ============================================
-router.get('/impianti/:impiantoId/sensors', authMiddleware, sensorController.getSensors);
-router.get('/impianti/:impiantoId/sensors/dashboard', authMiddleware, sensorController.getSensorDashboard);
+router.get('/impianti/:impiantoId/sensors', authMiddleware, requireImpiantoAccess, sensorController.getSensors);
+router.get('/impianti/:impiantoId/sensors/dashboard', authMiddleware, requireImpiantoAccess, sensorController.getSensorDashboard);
 router.get('/sensors/:id/readings', authMiddleware, sensorController.getDeviceReadings);
 router.get('/sensors/:id/history', authMiddleware, sensorController.getHistory);
 router.get('/sensors/:id/stats', authMiddleware, sensorController.getStats);

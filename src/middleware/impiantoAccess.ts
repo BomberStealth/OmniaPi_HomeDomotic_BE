@@ -207,3 +207,110 @@ export const requireDeviceControl = async (
     });
   }
 };
+
+/**
+ * Middleware che verifica l'accesso a una stanza specifica
+ * Per ospiti con accesso_completo=false, verifica che la stanza sia in stanze_abilitate
+ * Proprietari/installatori/utenti con accesso_completo hanno sempre accesso
+ */
+export const requireStanzaAccess = async (
+  req: ImpiantoAccessRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const stanzaId = req.params.stanzaId || req.body.stanzaId;
+    const userId = req.user?.userId;
+    const ruolo = req.user?.ruolo;
+
+    if (!stanzaId) {
+      return res.status(400).json({
+        success: false,
+        error: 'ID stanza richiesto'
+      });
+    }
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Autenticazione richiesta'
+      });
+    }
+
+    // Admin ha sempre accesso
+    if (ruolo === 'admin') {
+      return next();
+    }
+
+    // Recupera la stanza e il suo impianto
+    const stanze = await query(
+      'SELECT s.*, i.utente_id, i.installatore_id FROM stanze s JOIN impianti i ON s.impianto_id = i.id WHERE s.id = ?',
+      [stanzaId]
+    ) as RowDataPacket[];
+
+    if (stanze.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Stanza non trovata'
+      });
+    }
+
+    const stanza = stanze[0];
+    const impiantoId = stanza.impianto_id;
+
+    // Proprietario o installatore originale hanno sempre accesso
+    if (stanza.utente_id === userId || stanza.installatore_id === userId) {
+      return next();
+    }
+
+    // Verifica condivisione
+    const condivisioni = await query(
+      `SELECT * FROM condivisioni_impianto
+       WHERE impianto_id = ? AND utente_id = ? AND stato = 'accettato'
+       LIMIT 1`,
+      [impiantoId, userId]
+    ) as RowDataPacket[];
+
+    if (condivisioni.length === 0) {
+      return res.status(403).json({
+        success: false,
+        error: 'Accesso negato a questo impianto'
+      });
+    }
+
+    const condivisione = condivisioni[0];
+
+    // Se ha accesso completo, può vedere tutte le stanze
+    if (condivisione.accesso_completo) {
+      return next();
+    }
+
+    // Altrimenti verifica stanze_abilitate
+    let stanzeAbilitate: number[] = [];
+    if (condivisione.stanze_abilitate) {
+      try {
+        stanzeAbilitate = typeof condivisione.stanze_abilitate === 'string'
+          ? JSON.parse(condivisione.stanze_abilitate)
+          : condivisione.stanze_abilitate;
+      } catch {
+        stanzeAbilitate = [];
+      }
+    }
+
+    if (!stanzeAbilitate.includes(Number(stanzaId))) {
+      return res.status(403).json({
+        success: false,
+        error: 'Non hai accesso a questa stanza',
+        code: 'NO_ROOM_ACCESS'
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Errore verifica accesso stanza:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Errore durante la verifica dei permessi'
+    });
+  }
+};

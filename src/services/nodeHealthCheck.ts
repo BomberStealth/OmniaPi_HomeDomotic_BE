@@ -49,7 +49,7 @@ export const checkNodeHealth = async () => {
       );
 
       // Update in-memory state (può ritornare null se nodo non è in memoria)
-      const updatedNode = updateNodeState(mac, { online: false });
+      const { node: updatedNode, changed } = updateNodeState(mac, { online: false });
 
       logger.warn(`⚠️ Node ${mac} (${node.nome}) marked OFFLINE - last seen: ${node.aggiornato_il}`);
 
@@ -64,6 +64,7 @@ export const checkNodeHealth = async () => {
         relay2: false,
         lastSeen: new Date()
       };
+      // Emit sempre per health check (è un cambio importante)
       emitOmniapiNodeUpdate(nodePayload);
 
       // Also emit dispositivo-update for the specific impianto

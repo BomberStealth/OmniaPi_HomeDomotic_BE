@@ -4,7 +4,7 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { UserRole } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { sendInviteEmail } from '../services/emailService';
-import { emitNotificationToUser } from '../socket';
+import { emitNotificationToUser, emitCondivisioneUpdate } from '../socket';
 
 // ============================================
 // CONTROLLER CONDIVISIONI IMPIANTO
@@ -350,6 +350,9 @@ export const invitaUtente = async (req: Request, res: Response) => {
 
     console.log(`✅ Invito creato: ${email} -> impianto ${impiantoId} (${tipoAccesso})`);
 
+    // Emit real-time update alla room dell'impianto
+    emitCondivisioneUpdate(parseInt(impiantoId), nuovaCondivisione[0], 'created');
+
     res.status(201).json({
       success: true,
       data: nuovaCondivisione[0],
@@ -524,6 +527,9 @@ export const rimuoviCondivisione = async (req: Request, res: Response) => {
 
     await query('DELETE FROM condivisioni_impianto WHERE id = ?', [condivisioneId]);
 
+    // Emit real-time update alla room dell'impianto (per aggiornare la lista condivisioni)
+    emitCondivisioneUpdate(condivisione.impianto_id, condivisione, 'removed');
+
     // Emetti evento WebSocket all'utente che ha perso l'accesso
     if (condivisione.utente_id) {
       emitNotificationToUser(condivisione.utente_id, {
@@ -596,13 +602,41 @@ export const accettaInvito = async (req: Request, res: Response) => {
       WHERE id = ?
     `, [userId, condivisioneId]);
 
-    // Recupera info impianto
+    // Recupera info impianto e utente
     const impianti = await query(
       'SELECT nome FROM impianti WHERE id = ?',
       [condivisione.impianto_id]
     ) as RowDataPacket[];
 
+    const utenti = await query(
+      'SELECT nome, cognome FROM utenti WHERE id = ?',
+      [userId]
+    ) as RowDataPacket[];
+
+    const userName = utenti[0] ? `${utenti[0].nome} ${utenti[0].cognome}` : userEmail;
+    const impiantoNome = impianti[0]?.nome || 'Impianto';
+
     console.log(`✅ Invito ${condivisioneId} accettato da user ${userId}`);
+
+    // Recupera condivisione aggiornata per l'emit
+    const condivisioneAggiornata = await query(`
+      SELECT c.*, u.nome as utente_nome, u.cognome as utente_cognome, u.ruolo as utente_tipo_account
+      FROM condivisioni_impianto c
+      LEFT JOIN utenti u ON c.utente_id = u.id
+      WHERE c.id = ?
+    `, [condivisioneId]) as RowDataPacket[];
+
+    // Emit real-time update alla room dell'impianto
+    emitCondivisioneUpdate(condivisione.impianto_id, condivisioneAggiornata[0], 'accepted');
+
+    // Notifica chi ha inviato l'invito
+    emitNotificationToUser(condivisione.invitato_da, {
+      type: 'invite_accepted',
+      title: 'Invito accettato!',
+      message: `${userName} ha accettato l'invito per "${impiantoNome}"`,
+      impiantoId: condivisione.impianto_id,
+      timestamp: new Date().toISOString()
+    });
 
     res.json({
       success: true,
@@ -669,7 +703,30 @@ export const rifiutaInvito = async (req: Request, res: Response) => {
       WHERE id = ?
     `, [userId, condivisioneId]);
 
+    // Recupera info impianto e utente per la notifica
+    const impianti = await query(
+      'SELECT nome FROM impianti WHERE id = ?',
+      [condivisione.impianto_id]
+    ) as RowDataPacket[];
+
+    const utenti = await query(
+      'SELECT nome, cognome FROM utenti WHERE id = ?',
+      [userId]
+    ) as RowDataPacket[];
+
+    const userName = utenti[0] ? `${utenti[0].nome} ${utenti[0].cognome}` : userEmail;
+    const impiantoNome = impianti[0]?.nome || 'Impianto';
+
     console.log(`❌ Invito ${condivisioneId} rifiutato da user ${userId}`);
+
+    // Notifica chi ha inviato l'invito
+    emitNotificationToUser(condivisione.invitato_da, {
+      type: 'invite_rejected',
+      title: 'Invito rifiutato',
+      message: `${userName} ha rifiutato l'invito per "${impiantoNome}"`,
+      impiantoId: condivisione.impianto_id,
+      timestamp: new Date().toISOString()
+    });
 
     res.json({
       success: true,

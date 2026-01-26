@@ -3,26 +3,35 @@ import { Server as HTTPServer } from 'http';
 import jwt from 'jsonwebtoken';
 import { jwtConfig } from '../config/jwt';
 import { JWTPayload } from '../types';
+import { socketManager } from './socketManager';
+import { WS_EVENTS } from './eventTypes';
 import { OmniapiNode, LedDevice } from '../services/omniapiState';
 
 // ============================================
-// WEBSOCKET SERVER
+// WEBSOCKET SERVER - Refactored with SocketManager
 // ============================================
 
-// Global io instance for use in other modules
-let ioInstance: SocketServer | null = null;
+// Re-export for backward compatibility
+export { socketManager } from './socketManager';
+export { WS_EVENTS } from './eventTypes';
 
-export const getIO = (): SocketServer | null => ioInstance;
+// Legacy getIO function - use socketManager.getIO() instead
+export const getIO = (): SocketServer | null => socketManager.getIO();
 
 export const initializeSocket = (httpServer: HTTPServer) => {
   const io = new SocketServer(httpServer, {
     cors: {
-      origin: '*', // In produzione specificare domini consentiti
+      origin: '*',
       methods: ['GET', 'POST']
-    }
+    },
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
-  // Middleware autenticazione
+  // Initialize the socket manager
+  socketManager.init(io);
+
+  // Middleware: Authentication
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
 
@@ -33,6 +42,8 @@ export const initializeSocket = (httpServer: HTTPServer) => {
     try {
       const decoded = jwt.verify(token, jwtConfig.secret) as JWTPayload;
       socket.data.user = decoded;
+      socket.data.userId = decoded.userId;
+      socket.data.email = decoded.email;
       next();
     } catch (error) {
       next(new Error('Token non valido'));
@@ -41,101 +52,188 @@ export const initializeSocket = (httpServer: HTTPServer) => {
 
   io.on('connection', (socket) => {
     const user = socket.data.user as JWTPayload;
-    console.log(`✅ Client connesso: ${user.email}`);
+    console.log(`[WS] ✅ ${user.email} connected (${socket.id})`);
 
-    // Join room per impianto
-    socket.on('join-impianto', (impiantoId: number) => {
-      socket.join(`impianto-${impiantoId}`);
-      console.log(`📍 ${user.email} joined impianto-${impiantoId}`);
+    // Join user's personal room
+    socketManager.joinUser(socket, user.userId);
+
+    // Setup heartbeat
+    socketManager.setupHeartbeat(socket);
+
+    // Join impianto room
+    socket.on('join-impianto', (data: number | { impiantoId: number }) => {
+      // Handle both old format (just number) and new format (object)
+      const impiantoId = typeof data === 'number' ? data : data.impiantoId;
+      socketManager.joinImpianto(socket, impiantoId);
     });
 
-    // Leave room
-    socket.on('leave-impianto', (impiantoId: number) => {
-      socket.leave(`impianto-${impiantoId}`);
+    // Leave impianto room
+    socket.on('leave-impianto', (data: number | { impiantoId: number }) => {
+      const impiantoId = typeof data === 'number' ? data : data.impiantoId;
+      socketManager.leaveImpianto(socket, impiantoId);
     });
 
+    // Disconnect
     socket.on('disconnect', () => {
-      console.log(`❌ Client disconnesso: ${user.email}`);
+      socketManager.handleDisconnect(socket);
     });
   });
-
-  // Store io instance for use in other modules
-  ioInstance = io;
 
   return io;
 };
 
 // ============================================
-// STANZE, SCENE, DISPOSITIVI WEBSOCKET EVENTS
+// LEGACY EMIT FUNCTIONS
+// These maintain backward compatibility during migration
+// Use socketManager.emitToImpianto(id, WS_EVENTS.XXX, payload) for new code
 // ============================================
 
-// Emit quando una stanza viene creata/modificata/eliminata
+// Stanze
 export const emitStanzaUpdate = (impiantoId: number, stanza: any, action: 'created' | 'updated' | 'deleted') => {
-  if (ioInstance) {
-    ioInstance.to(`impianto-${impiantoId}`).emit('stanza-update', { stanza, action });
-    console.log(`🏠 WS: stanza-update [${action}] emitted to impianto-${impiantoId}`);
+  const eventMap: Record<string, string> = {
+    created: WS_EVENTS.STANZA_CREATED,
+    updated: WS_EVENTS.STANZA_UPDATED,
+    deleted: WS_EVENTS.STANZA_DELETED,
+  };
+  socketManager.emitToImpianto(impiantoId, eventMap[action], stanza);
+
+  // Also emit legacy event for old frontend listeners
+  const io = socketManager.getIO();
+  if (io) {
+    io.to(`impianto_${impiantoId}`).emit('stanza-update', { stanza, action });
+    // Also emit to old room format for compatibility
+    io.to(`impianto-${impiantoId}`).emit('stanza-update', { stanza, action });
   }
 };
 
-// Emit quando una scena viene creata/modificata/eliminata/eseguita
+// Scene
 export const emitScenaUpdate = (impiantoId: number, scena: any, action: 'created' | 'updated' | 'deleted' | 'executed') => {
-  if (ioInstance) {
-    ioInstance.to(`impianto-${impiantoId}`).emit('scena-update', { scena, action });
-    console.log(`🎬 WS: scena-update [${action}] emitted to impianto-${impiantoId}`);
+  const eventMap: Record<string, string> = {
+    created: WS_EVENTS.SCENA_CREATED,
+    updated: WS_EVENTS.SCENA_UPDATED,
+    deleted: WS_EVENTS.SCENA_DELETED,
+    executed: WS_EVENTS.SCENA_EXECUTED,
+  };
+  socketManager.emitToImpianto(impiantoId, eventMap[action], scena);
+
+  // Also emit legacy event for old frontend listeners
+  const io = socketManager.getIO();
+  if (io) {
+    io.to(`impianto_${impiantoId}`).emit('scena-update', { scena, action });
+    io.to(`impianto-${impiantoId}`).emit('scena-update', { scena, action });
   }
 };
 
-// Emit quando un dispositivo Tasmota/generico viene aggiornato
+// Dispositivi
 export const emitDispositivoUpdate = (impiantoId: number, dispositivo: any, action: 'created' | 'updated' | 'deleted' | 'state-changed') => {
-  if (ioInstance) {
-    ioInstance.to(`impianto-${impiantoId}`).emit('dispositivo-update', { dispositivo, action });
-    console.log(`💡 WS: dispositivo-update [${action}] emitted to impianto-${impiantoId}`);
+  const eventMap: Record<string, string> = {
+    created: WS_EVENTS.DISPOSITIVO_CREATED,
+    updated: WS_EVENTS.DISPOSITIVO_UPDATED,
+    deleted: WS_EVENTS.DISPOSITIVO_DELETED,
+    'state-changed': WS_EVENTS.DISPOSITIVO_STATE_CHANGED,
+  };
+  socketManager.emitToImpianto(impiantoId, eventMap[action], dispositivo);
+
+  // Also emit legacy event for old frontend listeners
+  const io = socketManager.getIO();
+  if (io) {
+    io.to(`impianto_${impiantoId}`).emit('dispositivo-update', { dispositivo, action });
+    io.to(`impianto-${impiantoId}`).emit('dispositivo-update', { dispositivo, action });
   }
 };
 
-// Emit per refresh completo di tutti i dati (utile dopo riconnessione)
+// Full Sync
 export const emitFullSync = (impiantoId: number, data: { stanze?: any[], scene?: any[], dispositivi?: any[] }) => {
-  if (ioInstance) {
-    ioInstance.to(`impianto-${impiantoId}`).emit('full-sync', data);
-    console.log(`🔄 WS: full-sync emitted to impianto-${impiantoId}`);
+  socketManager.emitToImpianto(impiantoId, WS_EVENTS.FULL_SYNC, data);
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.to(`impianto_${impiantoId}`).emit('full-sync', data);
+    io.to(`impianto-${impiantoId}`).emit('full-sync', data);
+  }
+};
+
+// Gateway
+export const emitGatewayUpdate = (impiantoId: number, gateway: any, action: 'associated' | 'disassociated' | 'updated') => {
+  const eventMap: Record<string, string> = {
+    associated: WS_EVENTS.GATEWAY_ASSOCIATED,
+    disassociated: WS_EVENTS.GATEWAY_DISASSOCIATED,
+    updated: WS_EVENTS.GATEWAY_UPDATED,
+  };
+  socketManager.emitToImpianto(impiantoId, eventMap[action], gateway);
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.to(`impianto_${impiantoId}`).emit('gateway-update', { gateway, action });
+    io.to(`impianto-${impiantoId}`).emit('gateway-update', { gateway, action });
+  }
+};
+
+// Condivisioni
+export const emitCondivisioneUpdate = (impiantoId: number, condivisione: any, action: 'created' | 'accepted' | 'removed') => {
+  const eventMap: Record<string, string> = {
+    created: WS_EVENTS.CONDIVISIONE_CREATED,
+    accepted: WS_EVENTS.CONDIVISIONE_ACCEPTED,
+    removed: WS_EVENTS.CONDIVISIONE_REMOVED,
+  };
+  socketManager.emitToImpianto(impiantoId, eventMap[action], condivisione);
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.to(`impianto_${impiantoId}`).emit('condivisione-update', { condivisione, action });
+    io.to(`impianto-${impiantoId}`).emit('condivisione-update', { condivisione, action });
   }
 };
 
 // ============================================
-// OMNIAPI WEBSOCKET EVENTS
+// OMNIAPI EVENTS (Global broadcasts)
 // ============================================
 
 export const emitOmniapiGatewayUpdate = (gateway: any) => {
-  if (ioInstance) {
-    ioInstance.emit('omniapi-gateway-update', gateway);
-    console.log('📡 WS: omniapi-gateway-update emitted');
+  socketManager.broadcast(WS_EVENTS.GATEWAY_UPDATED, gateway);
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.emit('omniapi-gateway-update', gateway);
   }
 };
 
 export const emitOmniapiNodeUpdate = (node: OmniapiNode) => {
-  if (ioInstance) {
-    ioInstance.emit('omniapi-node-update', node);
-    console.log(`📡 WS: omniapi-node-update emitted for ${node.mac}`);
+  socketManager.broadcast(WS_EVENTS.NODE_UPDATED, node);
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.emit('omniapi-node-update', node);
   }
 };
 
 export const emitOmniapiNodesUpdate = (nodes: OmniapiNode[]) => {
-  if (ioInstance) {
-    ioInstance.emit('omniapi-nodes-update', nodes);
-    console.log(`📡 WS: omniapi-nodes-update emitted (${nodes.length} nodes)`);
+  socketManager.broadcast(WS_EVENTS.NODE_UPDATED, { nodes });
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.emit('omniapi-nodes-update', nodes);
   }
 };
 
 export const emitOmniapiLedUpdate = (ledState: LedDevice | any) => {
-  if (ioInstance) {
-    ioInstance.emit('omniapi-led-update', ledState);
-    console.log(`📡 WS: omniapi-led-update emitted for ${ledState.mac}`);
+  socketManager.broadcast(WS_EVENTS.LED_UPDATED, ledState);
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.emit('omniapi-led-update', ledState);
   }
 };
 
 // ============================================
-// UNIFIED DEVICE UPDATE (NEW - Phase 2)
-// Emits both legacy events AND new unified event
+// UNIFIED DEVICE UPDATE
 // ============================================
 
 export interface DeviceUpdatePayload {
@@ -149,31 +247,32 @@ export interface DeviceUpdatePayload {
   timestamp: number;
 }
 
-/**
- * Unified device update - emits to impianto room
- * Also emits legacy events for backward compatibility
- */
 export const emitDeviceUpdate = (impiantoId: number | null, device: DeviceUpdatePayload) => {
-  if (!ioInstance) return;
-
-  // Add timestamp for deduplication
   const payload = {
     ...device,
     timestamp: device.timestamp || Date.now()
   };
 
-  // Emit unified event to impianto room (or broadcast if no impianto)
   if (impiantoId) {
-    ioInstance.to(`impianto-${impiantoId}`).emit('device-update', payload);
-    console.log(`📡 WS: device-update emitted to impianto-${impiantoId} for ${device.mac}`);
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.DISPOSITIVO_STATE_CHANGED, payload);
   } else {
-    ioInstance.emit('device-update', payload);
-    console.log(`📡 WS: device-update broadcast for ${device.mac}`);
+    socketManager.broadcast(WS_EVENTS.DISPOSITIVO_STATE_CHANGED, payload);
   }
 
   // Also emit legacy events for backward compatibility
+  const io = socketManager.getIO();
+  if (!io) return;
+
+  if (impiantoId) {
+    io.to(`impianto_${impiantoId}`).emit('device-update', payload);
+    io.to(`impianto-${impiantoId}`).emit('device-update', payload);
+  } else {
+    io.emit('device-update', payload);
+  }
+
+  // Legacy node/led events
   if (device.category === 'relay') {
-    ioInstance.emit('omniapi-node-update', {
+    io.emit('omniapi-node-update', {
       mac: device.mac,
       online: device.stato === 'online',
       relay1: device.state?.channels?.[0] ?? false,
@@ -183,7 +282,7 @@ export const emitDeviceUpdate = (impiantoId: number | null, device: DeviceUpdate
       lastSeen: new Date()
     });
   } else if (device.category === 'led') {
-    ioInstance.emit('omniapi-led-update', {
+    io.emit('omniapi-led-update', {
       mac: device.mac,
       online: device.stato === 'online',
       power: device.state?.power ?? false,
@@ -197,13 +296,7 @@ export const emitDeviceUpdate = (impiantoId: number | null, device: DeviceUpdate
   }
 };
 
-/**
- * Emit device update by MAC - looks up impiantoId from device
- */
 export const emitDeviceUpdateByMac = async (mac: string, state: any, category: 'relay' | 'led') => {
-  if (!ioInstance) return;
-
-  // For now, broadcast (Phase 6 will add proper room scoping)
   const payload: DeviceUpdatePayload = {
     mac,
     deviceType: category === 'relay' ? 'omniapi_node' : 'omniapi_led',
@@ -213,12 +306,11 @@ export const emitDeviceUpdateByMac = async (mac: string, state: any, category: '
     timestamp: Date.now()
   };
 
-  // Broadcast for now (legacy behavior)
   emitDeviceUpdate(null, payload);
 };
 
 // ============================================
-// NOTIFICATION WEBSOCKET EVENTS
+// NOTIFICATION EVENTS
 // ============================================
 
 export interface NotificationEvent {
@@ -232,37 +324,52 @@ export interface NotificationEvent {
 }
 
 export const emitNotification = (impiantoId: number, notification: NotificationEvent, excludeUserId?: number) => {
-  if (ioInstance) {
-    const room = `impianto-${impiantoId}`;
+  const io = socketManager.getIO();
+  if (!io) return;
 
-    if (excludeUserId) {
-      // Emit a tutti nella room TRANNE l'utente che ha fatto l'azione
-      const socketsInRoom = ioInstance.sockets.adapter.rooms.get(room);
+  const rooms = [`impianto_${impiantoId}`, `impianto-${impiantoId}`];
+
+  if (excludeUserId) {
+    // Emit to all in room except the excluded user
+    rooms.forEach(room => {
+      const socketsInRoom = io.sockets.adapter.rooms.get(room);
       if (socketsInRoom) {
         socketsInRoom.forEach(socketId => {
-          const socket = ioInstance!.sockets.sockets.get(socketId);
-          if (socket && socket.data.user?.userId !== excludeUserId) {
+          const socket = io.sockets.sockets.get(socketId);
+          if (socket && socket.data.userId !== excludeUserId) {
             socket.emit('notification', notification);
+            socket.emit('ws-event', {
+              type: WS_EVENTS.NOTIFICATION,
+              payload: notification,
+              impiantoId,
+              timestamp: new Date().toISOString()
+            });
           }
         });
-        console.log(`🔔 WS: notification emitted to impianto-${impiantoId} (excluded user ${excludeUserId}): ${notification.title}`);
       }
-    } else {
-      // Emit a tutti nella room
-      ioInstance.to(room).emit('notification', notification);
-      console.log(`🔔 WS: notification emitted to impianto-${impiantoId}: ${notification.title}`);
-    }
+    });
+    console.log(`[WS] 🔔 notification -> impianto_${impiantoId} (excluded user ${excludeUserId})`);
+  } else {
+    rooms.forEach(room => {
+      io.to(room).emit('notification', notification);
+    });
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.NOTIFICATION, notification);
+    console.log(`[WS] 🔔 notification -> impianto_${impiantoId}`);
   }
 };
 
-// Emit notification to a specific user (by userId)
 export const emitNotificationToUser = (userId: number, notification: any) => {
-  if (ioInstance) {
-    // Find all sockets belonging to this user
-    ioInstance.sockets.sockets.forEach(socket => {
-      if (socket.data.user?.userId === userId) {
+  socketManager.emitToUser(userId, WS_EVENTS.NOTIFICATION, notification);
+
+  // Also emit legacy event
+  const io = socketManager.getIO();
+  if (io) {
+    io.to(`user_${userId}`).emit('notification', notification);
+
+    // Also find sockets by userId for backward compat
+    io.sockets.sockets.forEach(socket => {
+      if (socket.data.userId === userId) {
         socket.emit('notification', notification);
-        console.log(`🔔 WS: notification emitted to user ${userId}: ${notification.titolo || notification.title}`);
       }
     });
   }

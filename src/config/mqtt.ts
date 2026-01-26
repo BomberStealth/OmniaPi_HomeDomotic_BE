@@ -209,7 +209,7 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
       // Update state in memory store
       const stateUpdateStart = Date.now();
-      const ledState = updateLedState(data.mac, {
+      const { led: ledState, changed } = updateLedState(data.mac, {
         power: data.power,
         r: data.r,
         g: data.g,
@@ -220,11 +220,13 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       });
       console.log(`⏱️ [TIMING-LED] Memory update: ${Date.now() - stateUpdateStart}ms`);
 
-      // Emit WebSocket event
-      const wsEmitStart = Date.now();
-      emitOmniapiLedUpdate(ledState);
-      console.log(`⏱️ [TIMING-LED] WebSocket emit: ${Date.now() - wsEmitStart}ms`);
-      console.log(`⏱️ [TIMING-LED] Total processing: ${Date.now() - messageStart}ms`);
+      // Emit WebSocket event ONLY if changed
+      if (changed) {
+        const wsEmitStart = Date.now();
+        emitOmniapiLedUpdate(ledState);
+        console.log(`⏱️ [TIMING-LED] WebSocket emit: ${Date.now() - wsEmitStart}ms`);
+      }
+      console.log(`⏱️ [TIMING-LED] Total processing: ${Date.now() - messageStart}ms (changed=${changed})`);
       return;
     }
 
@@ -266,8 +268,10 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
     // omniapi/gateway/status
     if (topic === 'omniapi/gateway/status') {
-      const gateway = updateGatewayState(data);
-      emitOmniapiGatewayUpdate(gateway);
+      const { gateway, changed } = updateGatewayState(data);
+      if (changed) {
+        emitOmniapiGatewayUpdate(gateway);
+      }
 
       // Registra/aggiorna gateway nel database
       // Usa MAC se disponibile, altrimenti cerca per IP
@@ -301,17 +305,16 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
         console.log(`📡 [DEBUG] Filtered: ${relayNodes.length} relay nodes, ${ledNodes.length} LED strips`);
 
         // Log e aggiorna solo i relay nodes in nodesState
-        relayNodes.forEach((n: any) => {
-          console.log(`   - ${n.mac}: relay1=${n.relay1}, relay2=${n.relay2}, online=${n.online}`);
-        });
-        updateNodesFromList(relayNodes);
-        emitOmniapiNodesUpdate(getAllNodes());
+        const { nodes: updatedNodes, changed: nodesChanged } = updateNodesFromList(relayNodes);
+        if (nodesChanged) {
+          emitOmniapiNodesUpdate(updatedNodes);
+        }
 
         // Aggiorna i LED strip in ledDevicesState
         ledNodes.forEach((led: any) => {
-          console.log(`   🌈 LED ${led.mac}: online=${led.online}, deviceType=${led.deviceType}`);
+          let result;
           if (led.ledState) {
-            updateLedState(led.mac, {
+            result = updateLedState(led.mac, {
               power: led.ledState.power,
               r: led.ledState.r,
               g: led.ledState.g,
@@ -322,11 +325,10 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
             });
           } else {
             // LED senza stato dettagliato - aggiorna solo online
-            updateLedState(led.mac, { online: led.online ?? true });
+            result = updateLedState(led.mac, { online: led.online ?? true });
           }
-          const ledState = getLedState(led.mac);
-          if (ledState) {
-            emitOmniapiLedUpdate(ledState);
+          if (result.changed) {
+            emitOmniapiLedUpdate(result.led);
           }
         });
 
@@ -350,7 +352,7 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       console.log(`⏱️ [TIMING] Node state message processing started at +${Date.now() - messageStart}ms`);
 
       const stateUpdateStart = Date.now();
-      const nodeUpdate = updateNodeState(mac, {
+      const { node: nodeUpdate, changed } = updateNodeState(mac, {
         relay1,
         relay2,
         online: data.online ?? true,
@@ -358,9 +360,9 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       });
       console.log(`⏱️ [TIMING] Memory state update: ${Date.now() - stateUpdateStart}ms`);
 
-      if (nodeUpdate) {
+      if (nodeUpdate && changed) {
         const wsEmitStart = Date.now();
-        console.log(`📡 [DEBUG] Emitting node update:`, JSON.stringify(nodeUpdate));
+        console.log(`📡 [DEBUG] Emitting node update (CHANGED):`, JSON.stringify(nodeUpdate));
         emitOmniapiNodeUpdate(nodeUpdate);
         console.log(`⏱️ [TIMING] WebSocket emit: ${Date.now() - wsEmitStart}ms`);
 

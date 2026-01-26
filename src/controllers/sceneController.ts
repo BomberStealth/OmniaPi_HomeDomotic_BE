@@ -77,7 +77,8 @@ export const createScena = async (req: AuthRequest, res: Response) => {
       ]
     );
 
-    const [scena]: any = await query('SELECT * FROM scene WHERE id = ?', [result.insertId]);
+    const scenaRows: any = await query('SELECT * FROM scene WHERE id = ?', [result.insertId]);
+    const scenaCreata = scenaRows[0];
 
     // Ricarica lo scheduling se presente
     if (scheduling) {
@@ -85,9 +86,9 @@ export const createScena = async (req: AuthRequest, res: Response) => {
     }
 
     // Emit WebSocket event
-    emitScenaUpdate(parseInt(impiantoId as string), scena[0], 'created');
+    emitScenaUpdate(parseInt(impiantoId as string), scenaCreata, 'created');
 
-    res.status(201).json(scena[0]);
+    res.status(201).json(scenaCreata);
   } catch (error) {
     console.error('Errore create scena:', error);
     res.status(500).json({ error: 'Errore durante la creazione della scena' });

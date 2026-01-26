@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
+import { emitGatewayUpdate } from '../socket';
 
 // ============================================
 // GATEWAY CONTROLLER
@@ -254,15 +255,21 @@ export const associateGateway = async (req: AuthRequest, res: Response) => {
 
     console.log(`✅ Gateway ${normalizedMac} associato all'impianto ${impiantoId}`);
 
+    const gatewayData = {
+      id: gateway.id,
+      mac: normalizedMac,
+      nome: nome || gateway.nome,
+      impianto_id: parseInt(impiantoId),
+      status: 'online'
+    };
+
+    // Emit WebSocket per aggiornamento real-time
+    emitGatewayUpdate(parseInt(impiantoId), gatewayData, 'associated');
+
     res.json({
       success: true,
       message: 'Gateway associato con successo',
-      gateway: {
-        id: gateway.id,
-        mac: normalizedMac,
-        nome: nome || gateway.nome,
-        impianto_id: parseInt(impiantoId)
-      }
+      gateway: gatewayData
     });
   } catch (error) {
     console.error('Errore associateGateway:', error);
@@ -290,7 +297,13 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Impianto non trovato' });
     }
 
-    // Trova e disassocia gateway
+    // Trova gateway prima di disassociare (per emit)
+    const gateways: any = await query(
+      'SELECT id, mac_address, nome FROM gateways WHERE impianto_id = ?',
+      [impiantoId]
+    );
+
+    // Disassocia gateway
     const result: any = await query(
       `UPDATE gateways
        SET impianto_id = NULL, status = 'pending'
@@ -303,6 +316,17 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
     }
 
     console.log(`🔓 Gateway disassociato dall'impianto ${impiantoId}`);
+
+    // Emit WebSocket per aggiornamento real-time
+    if (gateways && gateways.length > 0) {
+      emitGatewayUpdate(parseInt(impiantoId), {
+        id: gateways[0].id,
+        mac: gateways[0].mac_address,
+        nome: gateways[0].nome,
+        impianto_id: null,
+        status: 'pending'
+      }, 'disassociated');
+    }
 
     res.json({
       success: true,
@@ -354,6 +378,19 @@ export const updateGateway = async (req: AuthRequest, res: Response) => {
       `UPDATE gateways SET ${updates.join(', ')} WHERE id = ?`,
       values
     );
+
+    const gateway = gateways[0];
+
+    // Emit WebSocket per aggiornamento real-time
+    if (gateway.impianto_id) {
+      emitGatewayUpdate(gateway.impianto_id, {
+        id: gateway.id,
+        mac: gateway.mac_address,
+        nome: nome !== undefined ? nome : gateway.nome,
+        impianto_id: gateway.impianto_id,
+        status: gateway.status
+      }, 'updated');
+    }
 
     res.json({
       success: true,

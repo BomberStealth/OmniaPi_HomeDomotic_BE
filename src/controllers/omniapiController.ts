@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState } from '../services/omniapiState';
 import { omniapiCommand } from '../config/mqtt';
 import { query } from '../config/database';
+import { emitDispositivoUpdate } from '../socket';
 
 // ============================================
 // OMNIAPI CONTROLLER
@@ -454,10 +455,15 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
       [result.insertId]
     );
 
+    const nuovoDispositivo = dispositivo?.[0] || dispositivo;
+
+    // Emit WebSocket per aggiornamento real-time
+    emitDispositivoUpdate(parseInt(impiantoId), nuovoDispositivo, 'created');
+
     res.status(201).json({
       success: true,
       message: isLed ? 'LED Strip registrato con successo' : 'Nodo registrato con successo',
-      dispositivo: dispositivo?.[0] || dispositivo
+      dispositivo: nuovoDispositivo
     });
   } catch (error: any) {
     console.error('Errore registerNode:', error);
@@ -500,6 +506,9 @@ export const unregisterNode = async (req: AuthRequest, res: Response) => {
     await query('DELETE FROM dispositivi WHERE id = ?', [deviceId]);
 
     console.log(`🗑️ Nodo ${dispositivo.nome} (ID: ${deviceId}) eliminato. Scene aggiornate: ${sceneAggiornate}`);
+
+    // Emit WebSocket per aggiornamento real-time
+    emitDispositivoUpdate(dispositivo.impianto_id, { id: deviceId, ...dispositivo }, 'deleted');
 
     res.json({
       success: true,
@@ -559,6 +568,19 @@ export const updateRegisteredNode = async (req: AuthRequest, res: Response) => {
       `UPDATE dispositivi SET ${updates.join(', ')} WHERE id = ?`,
       values
     );
+
+    const dispositivo = dispositivi[0];
+
+    // Recupera dispositivo aggiornato per emit
+    const dispositivoAggiornato: any = await query(
+      'SELECT * FROM dispositivi WHERE id = ?',
+      [id]
+    );
+
+    // Emit WebSocket per aggiornamento real-time
+    if (dispositivoAggiornato && dispositivoAggiornato.length > 0) {
+      emitDispositivoUpdate(dispositivo.impianto_id, dispositivoAggiornato[0], 'updated');
+    }
 
     res.json({
       success: true,
