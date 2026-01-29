@@ -128,16 +128,27 @@ export const getImpiantoGateway = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
 
-    // Verifica accesso all'impianto
-    const impianti: any = await query(
-      `SELECT i.* FROM impianti i
-       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
-      [impiantoId, req.user!.userId, req.user!.userId]
-    );
+    // Admin bypass - admin ha sempre accesso
+    if (req.user?.ruolo === 'admin') {
+      const impianti: any = await query(
+        'SELECT * FROM impianti WHERE id = ?',
+        [impiantoId]
+      );
+      if (!impianti || impianti.length === 0) {
+        return res.status(404).json({ error: 'Impianto non trovato' });
+      }
+    } else {
+      // Verifica accesso all'impianto per utenti normali
+      const impianti: any = await query(
+        `SELECT i.* FROM impianti i
+         LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+         WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
+        [impiantoId, req.user!.userId, req.user!.userId]
+      );
 
-    if (!impianti || impianti.length === 0) {
-      return res.status(404).json({ error: 'Impianto non trovato' });
+      if (!impianti || impianti.length === 0) {
+        return res.status(404).json({ error: 'Impianto non trovato' });
+      }
     }
 
     // Recupera gateway
@@ -197,16 +208,19 @@ export const associateGateway = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'MAC address richiesto' });
     }
 
-    // Verifica accesso all'impianto
-    const impianti: any = await query(
-      `SELECT i.* FROM impianti i
-       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
-      [impiantoId, req.user!.userId, req.user!.userId]
-    );
+    // Admin bypass - admin ha sempre accesso
+    if (req.user?.ruolo !== 'admin') {
+      // Verifica accesso all'impianto per utenti normali
+      const impianti: any = await query(
+        `SELECT i.* FROM impianti i
+         LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+         WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
+        [impiantoId, req.user!.userId, req.user!.userId]
+      );
 
-    if (!impianti || impianti.length === 0) {
-      return res.status(404).json({ error: 'Impianto non trovato' });
+      if (!impianti || impianti.length === 0) {
+        return res.status(404).json({ error: 'Impianto non trovato' });
+      }
     }
 
     // Verifica che l'impianto non abbia già un gateway
@@ -285,16 +299,19 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
 
-    // Verifica accesso all'impianto
-    const impianti: any = await query(
-      `SELECT i.* FROM impianti i
-       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
-      [impiantoId, req.user!.userId, req.user!.userId]
-    );
+    // Admin bypass - admin ha sempre accesso
+    if (req.user?.ruolo !== 'admin') {
+      // Verifica accesso all'impianto per utenti normali
+      const impianti: any = await query(
+        `SELECT i.* FROM impianti i
+         LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+         WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
+        [impiantoId, req.user!.userId, req.user!.userId]
+      );
 
-    if (!impianti || impianti.length === 0) {
-      return res.status(404).json({ error: 'Impianto non trovato' });
+      if (!impianti || impianti.length === 0) {
+        return res.status(404).json({ error: 'Impianto non trovato' });
+      }
     }
 
     // Trova gateway prima di disassociare (per emit)
@@ -347,14 +364,24 @@ export const updateGateway = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const { nome } = req.body;
 
-    // Verifica che l'utente abbia accesso al gateway (tramite impianto)
-    const gateways: any = await query(
-      `SELECT g.* FROM gateways g
-       JOIN impianti i ON g.impianto_id = i.id
-       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE g.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
-      [id, req.user!.userId, req.user!.userId]
-    );
+    let gateways: any;
+
+    // Admin bypass - admin ha sempre accesso
+    if (req.user?.ruolo === 'admin') {
+      gateways = await query(
+        'SELECT * FROM gateways WHERE id = ?',
+        [id]
+      );
+    } else {
+      // Verifica che l'utente abbia accesso al gateway (tramite impianto)
+      gateways = await query(
+        `SELECT g.* FROM gateways g
+         JOIN impianti i ON g.impianto_id = i.id
+         LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
+         WHERE g.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
+        [id, req.user!.userId, req.user!.userId]
+      );
+    }
 
     if (!gateways || gateways.length === 0) {
       return res.status(404).json({ error: 'Gateway non trovato' });

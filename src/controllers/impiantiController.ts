@@ -50,34 +50,30 @@ export const getImpianti = async (req: Request, res: Response) => {
 
     let impianti: RowDataPacket[] = [];
 
-    if (ruolo === UserRole.ADMIN) {
-      // Admin vede tutti gli impianti
-      impianti = await query('SELECT * FROM impianti ORDER BY creato_il DESC') as RowDataPacket[];
-    } else {
-      // Tutti gli utenti vedono:
-      // 1. I propri impianti (utente_id = userId)
-      // 2. Gli impianti condivisi con loro (dalla tabella condivisioni_impianto con stato='accettato')
-      const propri = await query(
-        'SELECT * FROM impianti WHERE utente_id = ? ORDER BY creato_il DESC',
-        [userId]
-      ) as RowDataPacket[];
+    // TUTTI gli utenti (incluso admin) vedono solo:
+    // 1. I propri impianti (utente_id = userId)
+    // 2. Gli impianti condivisi con loro (dalla tabella condivisioni_impianto con stato='accettato')
+    // L'admin accede ad ALTRI impianti tramite "Gestione Admin" → ricerca
+    const propri = await query(
+      'SELECT * FROM impianti WHERE utente_id = ? ORDER BY creato_il DESC',
+      [userId]
+    ) as RowDataPacket[];
 
-      // Query sulla tabella corretta: condivisioni_impianto con stato='accettato'
-      const condivisi = await query(
-        `SELECT i.* FROM impianti i
-         INNER JOIN condivisioni_impianto c ON i.id = c.impianto_id
-         WHERE c.utente_id = ? AND c.stato = 'accettato'
-         ORDER BY i.creato_il DESC`,
-        [userId]
-      ) as RowDataPacket[];
+    // Query sulla tabella corretta: condivisioni_impianto con stato='accettato'
+    const condivisi = await query(
+      `SELECT i.* FROM impianti i
+       INNER JOIN condivisioni_impianto c ON i.id = c.impianto_id
+       WHERE c.utente_id = ? AND c.stato = 'accettato'
+       ORDER BY i.creato_il DESC`,
+      [userId]
+    ) as RowDataPacket[];
 
-      // Unisci senza duplicati
-      const impiantiMap = new Map();
-      [...propri, ...condivisi].forEach(imp => {
-        impiantiMap.set(imp.id, imp);
-      });
-      impianti = Array.from(impiantiMap.values());
-    }
+    // Unisci senza duplicati
+    const impiantiMap = new Map();
+    [...propri, ...condivisi].forEach(imp => {
+      impiantiMap.set(imp.id, imp);
+    });
+    impianti = Array.from(impiantiMap.values());
 
     res.json({
       success: true,

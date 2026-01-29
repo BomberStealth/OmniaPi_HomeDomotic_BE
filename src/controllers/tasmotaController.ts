@@ -20,19 +20,10 @@ export const getDispositivi = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
 
-    // Verifica che l'utente abbia accesso all'impianto
-    const [impianti]: any = await query(
-      `SELECT i.* FROM impianti i
-       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
-      [impiantoId, req.user!.userId, req.user!.userId]
-    );
+    // L'accesso è già verificato dal middleware requireImpiantoAccess
+    // che include admin bypass e imposta req.impianto
 
-    if (impianti.length === 0) {
-      return res.status(404).json({ error: 'Impianto non trovato' });
-    }
-
-    const [dispositivi]: any = await query(
+    const dispositivi: any = await query(
       `SELECT * FROM dispositivi
        WHERE impianto_id = ?
        AND (device_type IS NULL OR device_type != 'omniapi_node')
@@ -60,17 +51,7 @@ export const scanTasmota = async (req: AuthRequest, res: Response) => {
     const { impiantoId } = req.params;
     const { networkRange } = req.body; // es. "192.168.1.0/24"
 
-    // Verifica che l'utente abbia accesso all'impianto
-    const [impianti]: any = await query(
-      `SELECT i.* FROM impianti i
-       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
-      [impiantoId, req.user!.userId, req.user!.userId]
-    );
-
-    if (impianti.length === 0) {
-      return res.status(404).json({ error: 'Impianto non trovato' });
-    }
+    // L'accesso è già verificato dal middleware requireDeviceControl
 
     // Determina range di rete (default: 192.168.1.0/24)
     let target = networkRange || '192.168.1.0/24';
@@ -152,12 +133,12 @@ export const scanTasmota = async (req: AuthRequest, res: Response) => {
             };
 
             // Verifica se già presente nel database
-            const [existing]: any = await query(
-              'SELECT id FROM dispositivi WHERE ip_address = ? AND impianto_id = ?',
+            const existing: any = await query(
+              'SELECT id, bloccato FROM dispositivi WHERE ip_address = ? AND impianto_id = ?',
               [ip, impiantoId]
             );
 
-            if (existing && existing.length > 0 && existing[0] && existing[0].bloccato) {
+            if (existing && existing.length > 0 && existing[0]?.bloccato) {
               deviceInfo.gia_aggiunto = true;
             }
 
@@ -196,32 +177,22 @@ export const addDispositivo = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'IP e nome sono richiesti' });
     }
 
-    // Verifica che l'utente abbia accesso all'impianto
-    const [impianti]: any = await query(
-      `SELECT i.* FROM impianti i
-       LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
-      [impiantoId, req.user!.userId, req.user!.userId]
-    );
-
-    if (impianti.length === 0) {
-      return res.status(404).json({ error: 'Impianto non trovato' });
-    }
+    // L'accesso è già verificato dal middleware requireDeviceControl
 
     // Verifica se il dispositivo è già registrato (tramite MAC address)
     // In un'implementazione reale, fare una richiesta HTTP al dispositivo Tasmota
     // per ottenere MAC address e altre info
     const mac_address = `00:00:00:00:00:${Math.floor(Math.random() * 100).toString().padStart(2, '0')}`;
 
-    const [existing]: any = await query(
+    const existing: any = await query(
       'SELECT * FROM dispositivi WHERE mac_address = ?',
       [mac_address]
     );
 
-    if (existing && existing.length > 0 && existing[0].bloccato) {
+    if (existing && existing.length > 0 && existing[0]?.bloccato) {
       return res.status(400).json({
         error: 'Dispositivo già registrato su un altro account',
-        impianto_id: existing[0].impianto_id
+        impianto_id: existing[0]?.impianto_id
       });
     }
 
@@ -235,16 +206,17 @@ export const addDispositivo = async (req: AuthRequest, res: Response) => {
         [impiantoId, nome, tipo || 'generico', ip_address, mac_address, topic_mqtt]
       );
 
-      const [dispositivo]: any = await query('SELECT * FROM dispositivi WHERE id = ?', [result.insertId]);
+      const dispositivi: any = await query('SELECT * FROM dispositivi WHERE id = ?', [result.insertId]);
+      const dispositivo = dispositivi[0];
 
       // Emit WebSocket event
-      emitDispositivoUpdate(parseInt(impiantoId as string), dispositivo[0], 'created');
+      emitDispositivoUpdate(parseInt(impiantoId as string), dispositivo, 'created');
 
-      res.status(201).json(dispositivo[0]);
+      res.status(201).json(dispositivo);
     } catch (insertError: any) {
       if (insertError.code === 'ER_DUP_ENTRY') {
         // Recupera info del dispositivo esistente per mostrare l'impianto
-        const [existing]: any = await query(
+        const existingDevices: any = await query(
           `SELECT d.*, i.nome as impianto_nome
            FROM dispositivi d
            JOIN impianti i ON d.impianto_id = i.id
@@ -252,11 +224,11 @@ export const addDispositivo = async (req: AuthRequest, res: Response) => {
           [ip_address]
         );
 
-        if (existing && existing.length > 0) {
+        if (existingDevices && existingDevices.length > 0) {
           return res.status(409).json({
-            error: `Dispositivo già collegato all'impianto "${existing[0].impianto_nome}"`,
-            impianto_nome: existing[0].impianto_nome,
-            impianto_id: existing[0].impianto_id
+            error: `Dispositivo già collegato all'impianto "${existingDevices[0].impianto_nome}"`,
+            impianto_nome: existingDevices[0].impianto_nome,
+            impianto_id: existingDevices[0].impianto_id
           });
         }
         return res.status(400).json({ error: 'Dispositivo già registrato' });
@@ -424,7 +396,7 @@ export const controlDispositivo = async (req: AuthRequest, res: Response) => {
     // Usa il dispositivo già caricato dal guard (evita doppia query)
     const dispositivo = guardResult.device;
 
-    // Verifica accesso utente (query leggera solo per permessi)
+    // Verifica accesso utente (include admin tramite condivisione temporanea)
     const hasAccess: any = await query(
       `SELECT 1 FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id

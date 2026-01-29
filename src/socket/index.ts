@@ -83,9 +83,8 @@ export const initializeSocket = (httpServer: HTTPServer) => {
 };
 
 // ============================================
-// LEGACY EMIT FUNCTIONS
-// These maintain backward compatibility during migration
-// Use socketManager.emitToImpianto(id, WS_EVENTS.XXX, payload) for new code
+// EMIT FUNCTIONS (Unified - using WS_EVENTS only)
+// Legacy events removed - frontend uses new WS_EVENTS system
 // ============================================
 
 // Stanze
@@ -96,14 +95,7 @@ export const emitStanzaUpdate = (impiantoId: number, stanza: any, action: 'creat
     deleted: WS_EVENTS.STANZA_DELETED,
   };
   socketManager.emitToImpianto(impiantoId, eventMap[action], stanza);
-
-  // Also emit legacy event for old frontend listeners
-  const io = socketManager.getIO();
-  if (io) {
-    io.to(`impianto_${impiantoId}`).emit('stanza-update', { stanza, action });
-    // Also emit to old room format for compatibility
-    io.to(`impianto-${impiantoId}`).emit('stanza-update', { stanza, action });
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 // Scene
@@ -115,13 +107,7 @@ export const emitScenaUpdate = (impiantoId: number, scena: any, action: 'created
     executed: WS_EVENTS.SCENA_EXECUTED,
   };
   socketManager.emitToImpianto(impiantoId, eventMap[action], scena);
-
-  // Also emit legacy event for old frontend listeners
-  const io = socketManager.getIO();
-  if (io) {
-    io.to(`impianto_${impiantoId}`).emit('scena-update', { scena, action });
-    io.to(`impianto-${impiantoId}`).emit('scena-update', { scena, action });
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 // Dispositivi
@@ -133,25 +119,13 @@ export const emitDispositivoUpdate = (impiantoId: number, dispositivo: any, acti
     'state-changed': WS_EVENTS.DISPOSITIVO_STATE_CHANGED,
   };
   socketManager.emitToImpianto(impiantoId, eventMap[action], dispositivo);
-
-  // Also emit legacy event for old frontend listeners
-  const io = socketManager.getIO();
-  if (io) {
-    io.to(`impianto_${impiantoId}`).emit('dispositivo-update', { dispositivo, action });
-    io.to(`impianto-${impiantoId}`).emit('dispositivo-update', { dispositivo, action });
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 // Full Sync
 export const emitFullSync = (impiantoId: number, data: { stanze?: any[], scene?: any[], dispositivi?: any[] }) => {
   socketManager.emitToImpianto(impiantoId, WS_EVENTS.FULL_SYNC, data);
-
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.to(`impianto_${impiantoId}`).emit('full-sync', data);
-    io.to(`impianto-${impiantoId}`).emit('full-sync', data);
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 // Gateway
@@ -162,30 +136,21 @@ export const emitGatewayUpdate = (impiantoId: number, gateway: any, action: 'ass
     updated: WS_EVENTS.GATEWAY_UPDATED,
   };
   socketManager.emitToImpianto(impiantoId, eventMap[action], gateway);
-
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.to(`impianto_${impiantoId}`).emit('gateway-update', { gateway, action });
-    io.to(`impianto-${impiantoId}`).emit('gateway-update', { gateway, action });
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 // Condivisioni
 export const emitCondivisioneUpdate = (impiantoId: number, condivisione: any, action: 'created' | 'accepted' | 'removed') => {
+  console.log(`[CONDIVISIONE] emitCondivisioneUpdate chiamato: impiantoId=${impiantoId}, action=${action}`);
+  console.log(`[CONDIVISIONE] payload:`, JSON.stringify(condivisione, null, 2));
+
   const eventMap: Record<string, string> = {
     created: WS_EVENTS.CONDIVISIONE_CREATED,
     accepted: WS_EVENTS.CONDIVISIONE_ACCEPTED,
     removed: WS_EVENTS.CONDIVISIONE_REMOVED,
   };
   socketManager.emitToImpianto(impiantoId, eventMap[action], condivisione);
-
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.to(`impianto_${impiantoId}`).emit('condivisione-update', { condivisione, action });
-    io.to(`impianto-${impiantoId}`).emit('condivisione-update', { condivisione, action });
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 // ============================================
@@ -194,42 +159,22 @@ export const emitCondivisioneUpdate = (impiantoId: number, condivisione: any, ac
 
 export const emitOmniapiGatewayUpdate = (gateway: any) => {
   socketManager.broadcast(WS_EVENTS.GATEWAY_UPDATED, gateway);
-
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.emit('omniapi-gateway-update', gateway);
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 export const emitOmniapiNodeUpdate = (node: OmniapiNode) => {
   socketManager.broadcast(WS_EVENTS.NODE_UPDATED, node);
-
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.emit('omniapi-node-update', node);
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 export const emitOmniapiNodesUpdate = (nodes: OmniapiNode[]) => {
   socketManager.broadcast(WS_EVENTS.NODE_UPDATED, { nodes });
-
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.emit('omniapi-nodes-update', nodes);
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 export const emitOmniapiLedUpdate = (ledState: LedDevice | any) => {
   socketManager.broadcast(WS_EVENTS.LED_UPDATED, ledState);
-
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.emit('omniapi-led-update', ledState);
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 // ============================================
@@ -258,42 +203,7 @@ export const emitDeviceUpdate = (impiantoId: number | null, device: DeviceUpdate
   } else {
     socketManager.broadcast(WS_EVENTS.DISPOSITIVO_STATE_CHANGED, payload);
   }
-
-  // Also emit legacy events for backward compatibility
-  const io = socketManager.getIO();
-  if (!io) return;
-
-  if (impiantoId) {
-    io.to(`impianto_${impiantoId}`).emit('device-update', payload);
-    io.to(`impianto-${impiantoId}`).emit('device-update', payload);
-  } else {
-    io.emit('device-update', payload);
-  }
-
-  // Legacy node/led events
-  if (device.category === 'relay') {
-    io.emit('omniapi-node-update', {
-      mac: device.mac,
-      online: device.stato === 'online',
-      relay1: device.state?.channels?.[0] ?? false,
-      relay2: device.state?.channels?.[1] ?? false,
-      rssi: device.state?.rssi,
-      version: device.state?.firmwareVersion,
-      lastSeen: new Date()
-    });
-  } else if (device.category === 'led') {
-    io.emit('omniapi-led-update', {
-      mac: device.mac,
-      online: device.stato === 'online',
-      power: device.state?.power ?? false,
-      r: device.state?.r ?? 0,
-      g: device.state?.g ?? 255,
-      b: device.state?.b ?? 0,
-      brightness: device.state?.brightness ?? 128,
-      effect: device.state?.effect ?? 0,
-      lastSeen: new Date()
-    });
-  }
+  // Legacy events removed - now using only new WS_EVENTS system
 };
 
 export const emitDeviceUpdateByMac = async (mac: string, state: any, category: 'relay' | 'led') => {
@@ -359,18 +269,15 @@ export const emitNotification = (impiantoId: number, notification: NotificationE
 };
 
 export const emitNotificationToUser = (userId: number, notification: any) => {
+  const io = socketManager.getIO();
+  if (!io) return;
+
+  // Emit via new ws-event system
   socketManager.emitToUser(userId, WS_EVENTS.NOTIFICATION, notification);
 
-  // Also emit legacy event
-  const io = socketManager.getIO();
-  if (io) {
-    io.to(`user_${userId}`).emit('notification', notification);
-
-    // Also find sockets by userId for backward compat
-    io.sockets.sockets.forEach(socket => {
-      if (socket.data.userId === userId) {
-        socket.emit('notification', notification);
-      }
-    });
-  }
+  // ALSO emit via legacy 'notification' channel for backward compatibility
+  // ImpiantoSelector still uses this channel
+  const room = `user_${userId}`;
+  io.to(room).emit('notification', notification);
+  console.log(`[WS] 🔔 notification (legacy) -> user_${userId}`);
 };

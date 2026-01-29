@@ -12,7 +12,7 @@ export const getStanze = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
 
-    // Verifica che l'utente abbia accesso all'impianto
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
@@ -53,7 +53,7 @@ export const createStanza = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Nome è richiesto' });
     }
 
-    // Verifica che l'utente abbia accesso all'impianto
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'

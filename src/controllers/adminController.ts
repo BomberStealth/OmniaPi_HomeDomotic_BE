@@ -16,7 +16,7 @@ export const searchUsers = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Query di ricerca richiesta' });
     }
 
-    const [utenti]: any = await query(
+    const utenti: any = await query(
       `SELECT id, email, nome, cognome, ruolo, creato_il
        FROM utenti
        WHERE email LIKE ? OR nome LIKE ? OR cognome LIKE ?
@@ -38,13 +38,13 @@ export const getUserPermissions = async (req: AuthRequest, res: Response) => {
     const { userId } = req.params;
 
     // Verifica che l'utente esista
-    const [utenti]: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
+    const utenti: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
 
     if (utenti.length === 0) {
       return res.status(404).json({ error: 'Utente non trovato' });
     }
 
-    const [permessi]: any = await query(
+    const permessi: any = await query(
       'SELECT permesso, valore FROM permessi_utenti WHERE utente_id = ?',
       [userId]
     );
@@ -87,7 +87,7 @@ export const updateUserPermissions = async (req: AuthRequest, res: Response) => 
     }
 
     // Verifica che l'utente esista
-    const [utenti]: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
+    const utenti: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
 
     if (utenti.length === 0) {
       return res.status(404).json({ error: 'Utente non trovato' });
@@ -118,7 +118,7 @@ export const updateUserPermissions = async (req: AuthRequest, res: Response) => 
 // GET tutti gli utenti (solo admin)
 export const getAllUsers = async (req: AuthRequest, res: Response) => {
   try {
-    const [utenti]: any = await query(
+    const utenti: any = await query(
       `SELECT id, email, nome, cognome, ruolo, creato_il, aggiornato_il
        FROM utenti
        ORDER BY creato_il DESC`
@@ -142,7 +142,7 @@ export const updateUserRole = async (req: AuthRequest, res: Response) => {
     }
 
     // Verifica che l'utente esista
-    const [utenti]: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
+    const utenti: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
 
     if (utenti.length === 0) {
       return res.status(404).json({ error: 'Utente non trovato' });
@@ -168,7 +168,7 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
     const { userId } = req.params;
 
     // Verifica che l'utente esista
-    const [utenti]: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
+    const utenti: any = await query('SELECT * FROM utenti WHERE id = ?', [userId]);
 
     if (utenti.length === 0) {
       return res.status(404).json({ error: 'Utente non trovato' });
@@ -190,6 +190,54 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Errore delete user:', error);
     res.status(500).json({ error: 'Errore durante l\'eliminazione dell\'utente' });
+  }
+};
+
+// GET ricerca impianti (solo admin)
+export const searchImpianti = async (req: AuthRequest, res: Response) => {
+  try {
+    const { q } = req.query;
+
+    if (!q || typeof q !== 'string' || q.length < 2) {
+      return res.status(400).json({ error: 'Query di ricerca troppo corta (minimo 2 caratteri)' });
+    }
+
+    const searchTerm = `%${q}%`;
+    const searchId = parseInt(q) || 0;
+
+    // Cerca per: nome impianto, ID impianto, email proprietario, città, indirizzo
+    const impianti: any = await query(
+      `SELECT DISTINCT
+        i.id,
+        i.nome,
+        i.indirizzo,
+        i.citta,
+        i.cap,
+        i.email_proprietario,
+        i.creato_il,
+        u.nome as proprietario_nome,
+        u.cognome as proprietario_cognome,
+        u.email as proprietario_email
+      FROM impianti i
+      LEFT JOIN utenti u ON i.utente_id = u.id
+      WHERE
+        i.nome LIKE ?
+        OR i.id = ?
+        OR i.email_proprietario LIKE ?
+        OR i.citta LIKE ?
+        OR i.indirizzo LIKE ?
+        OR u.email LIKE ?
+        OR u.nome LIKE ?
+        OR u.cognome LIKE ?
+      ORDER BY i.creato_il DESC
+      LIMIT 20`,
+      [searchTerm, searchId, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm]
+    );
+
+    res.json({ impianti });
+  } catch (error) {
+    console.error('Errore ricerca impianti admin:', error);
+    res.status(500).json({ error: 'Errore nella ricerca' });
   }
 };
 
@@ -250,5 +298,112 @@ export const cleanupOrphanActions = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Errore cleanup orphan actions:', error);
     res.status(500).json({ error: 'Errore durante la pulizia' });
+  }
+};
+
+// ============================================
+// ADMIN MODE - Accesso temporaneo a impianti
+// ============================================
+
+// POST /api/admin/enter-impianto/:impiantoId
+// Crea una condivisione temporanea per l'admin
+export const enterImpiantoAsAdmin = async (req: AuthRequest, res: Response) => {
+  try {
+    const { impiantoId } = req.params;
+    const userId = req.user!.userId;
+    const ruolo = req.user!.ruolo;
+
+    console.log('🔑 enterImpiantoAsAdmin - START');
+    console.log('🔑 userId:', userId, 'ruolo:', ruolo, 'impiantoId:', impiantoId);
+
+    // Solo admin può usare questa funzione
+    if (ruolo !== 'admin') {
+      console.log('🔑 DENIED - Not admin');
+      return res.status(403).json({ error: 'Solo gli admin possono usare questa funzione' });
+    }
+
+    // Verifica che l'impianto esista
+    const impianti: any = await query('SELECT * FROM impianti WHERE id = ?', [impiantoId]);
+    if (impianti.length === 0) {
+      return res.status(404).json({ error: 'Impianto non trovato' });
+    }
+
+    // Controlla se l'admin è già proprietario
+    if (impianti[0].utente_id === userId) {
+      return res.status(400).json({
+        error: 'Sei il proprietario di questo impianto',
+        alreadyMember: true
+      });
+    }
+
+    // Controlla se l'admin ha già un invito normale (non admin_session)
+    const inviti: any = await query(
+      `SELECT * FROM condivisioni_impianto
+       WHERE impianto_id = ? AND utente_id = ? AND is_admin_session = false AND stato = 'accettato'`,
+      [impiantoId, userId]
+    );
+
+    if (inviti.length > 0) {
+      return res.status(400).json({
+        error: 'Sei già membro di questo impianto',
+        alreadyMember: true
+      });
+    }
+
+    // Elimina eventuali sessioni admin precedenti su ALTRI impianti
+    await query(
+      'DELETE FROM condivisioni_impianto WHERE utente_id = ? AND is_admin_session = true',
+      [userId]
+    );
+
+    // Crea la condivisione temporanea admin con accesso completo
+    // Nota: email_invitato e invitato_da sono required nella tabella
+    console.log('🔑 Creating admin session condivisione...');
+    const insertResult: any = await query(
+      `INSERT INTO condivisioni_impianto
+       (impianto_id, utente_id, email_invitato, invitato_da, stato, accesso_completo, is_admin_session, creato_il)
+       VALUES (?, ?, 'admin@session', ?, 'accettato', true, true, NOW())`,
+      [impiantoId, userId, userId]
+    );
+    console.log('🔑 Insert result:', insertResult.insertId || insertResult.affectedRows);
+
+    console.log(`🔐 Admin ${userId} entered impianto ${impiantoId} in admin mode - SUCCESS`);
+
+    // Ritorna l'impianto completo
+    res.json({
+      success: true,
+      impianto: impianti[0],
+      message: 'Accesso admin attivato'
+    });
+
+  } catch (error) {
+    console.error('Errore enterImpiantoAsAdmin:', error);
+    res.status(500).json({ error: 'Errore durante l\'accesso admin' });
+  }
+};
+
+// POST /api/admin/exit-impianto
+// Elimina la condivisione temporanea admin
+export const exitImpiantoAsAdmin = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+
+    // Elimina tutte le sessioni admin dell'utente
+    const result: any = await query(
+      'DELETE FROM condivisioni_impianto WHERE utente_id = ? AND is_admin_session = true',
+      [userId]
+    );
+
+    console.log(`🔐 Admin ${userId} exited admin mode, deleted ${result.affectedRows || 0} sessions`);
+
+    res.json({
+      success: true,
+      message: 'Accesso admin terminato',
+      deletedSessions: result.affectedRows || 0
+    });
+
+  } catch (error) {
+    console.error('Errore exitImpiantoAsAdmin:', error);
+    res.status(500).json({ error: 'Errore durante l\'uscita admin' });
   }
 };

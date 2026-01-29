@@ -163,6 +163,10 @@ export const login = async (req: Request, res: Response) => {
     // ========================================
     // SUCCESS: Generate Token
     // ========================================
+
+    // Pulizia sessioni admin orfane (se l'utente aveva sessioni admin attive)
+    await query('DELETE FROM condivisioni_impianto WHERE utente_id = ? AND is_admin_session = true', [user.id]);
+
     await recordLoginAttempt(normalizedEmail, clientIp, true);
 
     // Genera token JWT con token_version per invalidazione sessioni

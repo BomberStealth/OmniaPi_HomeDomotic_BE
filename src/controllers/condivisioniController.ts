@@ -4,7 +4,7 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { UserRole } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { sendInviteEmail } from '../services/emailService';
-import { emitNotificationToUser, emitCondivisioneUpdate } from '../socket';
+import { emitNotificationToUser, emitCondivisioneUpdate, socketManager, WS_EVENTS } from '../socket';
 
 // ============================================
 // CONTROLLER CONDIVISIONI IMPIANTO
@@ -251,10 +251,11 @@ export const invitaUtente = async (req: Request, res: Response) => {
       });
     }
 
-    // Verifica che non esista già una condivisione per questa email
+    // Verifica che non esista già una condivisione attiva per questa email
+    // Escludi quelli con stato='rifiutato' per permettere re-invito
     const esistenti = await query(
-      'SELECT id FROM condivisioni_impianto WHERE impianto_id = ? AND email_invitato = ?',
-      [impiantoId, email.toLowerCase()]
+      'SELECT id FROM condivisioni_impianto WHERE impianto_id = ? AND email_invitato = ? AND stato != ?',
+      [impiantoId, email.toLowerCase(), 'rifiutato']
     ) as RowDataPacket[];
 
     if (esistenti.length > 0) {
@@ -263,6 +264,12 @@ export const invitaUtente = async (req: Request, res: Response) => {
         error: 'Questo utente è già stato invitato a questo impianto'
       });
     }
+
+    // Rimuovi eventuali inviti rifiutati precedenti per permettere nuovo invito
+    await query(
+      'DELETE FROM condivisioni_impianto WHERE impianto_id = ? AND email_invitato = ? AND stato = ?',
+      [impiantoId, email.toLowerCase(), 'rifiutato']
+    );
 
     // Cerca se l'utente esiste già
     const utenti = await query(
@@ -317,13 +324,16 @@ export const invitaUtente = async (req: Request, res: Response) => {
         `Sei stato invitato all'impianto "${impiantoNome}" ${tipoAccesso}`
       ]);
 
-      // Emit notifica via WebSocket
+      // Emit notifica generica per il toast (verrà mostrato subito)
       emitNotificationToUser(utenteEsistente.id, {
         tipo: 'invito',
         titolo: 'Nuovo invito impianto',
         messaggio: `Sei stato invitato a gestire l'impianto "${impiantoNome}"`,
         condivisione_id: condivisioneId
       });
+
+      // NOTA: INVITE_RECEIVED viene emesso DOPO aver recuperato la condivisione completa
+      // per permettere al frontend di aggiungere l'invito alla lista
     } else {
       // Invia email di invito
       try {
@@ -340,22 +350,42 @@ export const invitaUtente = async (req: Request, res: Response) => {
       }
     }
 
-    // Recupera condivisione creata
+    // Recupera condivisione creata con utente_tipo_account per calcolare ruolo_visualizzato
     const nuovaCondivisione = await query(`
-      SELECT c.*, u.nome as utente_nome, u.cognome as utente_cognome
+      SELECT c.*, u.nome as utente_nome, u.cognome as utente_cognome, u.ruolo as utente_tipo_account
       FROM condivisioni_impianto c
       LEFT JOIN utenti u ON c.utente_id = u.id
       WHERE c.id = ?
     `, [condivisioneId]) as RowDataPacket[];
 
+    // Calcola ruolo_visualizzato per il frontend
+    const condivisioneConRuolo = {
+      ...nuovaCondivisione[0],
+      impianto_nome: impiantoNome, // Aggiungo nome impianto per il frontend
+      ruolo_visualizzato: calcRuoloVisualizzato(
+        nuovaCondivisione[0].utente_tipo_account as UserRole | null,
+        nuovaCondivisione[0].accesso_completo
+      )
+    };
+
     console.log(`✅ Invito creato: ${email} -> impianto ${impiantoId} (${tipoAccesso})`);
 
     // Emit real-time update alla room dell'impianto
-    emitCondivisioneUpdate(parseInt(impiantoId), nuovaCondivisione[0], 'created');
+    emitCondivisioneUpdate(parseInt(impiantoId), condivisioneConRuolo, 'created');
+
+    // Emit anche alla room personale dell'utente che ha invitato (backup se fuori dalla room impianto)
+    socketManager.emitToUser(userId, WS_EVENTS.CONDIVISIONE_CREATED, condivisioneConRuolo);
+
+    // Emit INVITE_RECEIVED alla room personale dell'utente invitato
+    // Questo permette al frontend di aggiornare la lista inviti in tempo reale
+    if (utenteEsistente) {
+      socketManager.emitToUser(utenteEsistente.id, WS_EVENTS.INVITE_RECEIVED, condivisioneConRuolo);
+      console.log(`📡 INVITE_RECEIVED emesso a user ${utenteEsistente.id}`);
+    }
 
     res.status(201).json({
       success: true,
-      data: nuovaCondivisione[0],
+      data: condivisioneConRuolo,
       message: utenteEsistente
         ? 'Invito inviato. L\'utente riceverà una notifica.'
         : 'Invito inviato via email. L\'utente dovrà registrarsi per accettare.'
@@ -530,8 +560,14 @@ export const rimuoviCondivisione = async (req: Request, res: Response) => {
     // Emit real-time update alla room dell'impianto (per aggiornare la lista condivisioni)
     emitCondivisioneUpdate(condivisione.impianto_id, condivisione, 'removed');
 
+    // Emit anche alla room personale di chi ha rimosso (backup se fuori dalla room impianto)
+    socketManager.emitToUser(userId, WS_EVENTS.CONDIVISIONE_REMOVED, condivisione);
+
     // Emetti evento WebSocket all'utente che ha perso l'accesso
     if (condivisione.utente_id) {
+      // Emit CONDIVISIONE_REMOVED anche a chi è stato rimosso
+      socketManager.emitToUser(condivisione.utente_id, WS_EVENTS.CONDIVISIONE_REMOVED, condivisione);
+
       emitNotificationToUser(condivisione.utente_id, {
         tipo: 'condivisione-rimossa',
         impianto_id: condivisione.impianto_id
@@ -626,8 +662,20 @@ export const accettaInvito = async (req: Request, res: Response) => {
       WHERE c.id = ?
     `, [condivisioneId]) as RowDataPacket[];
 
+    // Calcola ruolo_visualizzato per il frontend
+    const condivisioneConRuolo = {
+      ...condivisioneAggiornata[0],
+      ruolo_visualizzato: calcRuoloVisualizzato(
+        condivisioneAggiornata[0].utente_tipo_account as UserRole | null,
+        condivisioneAggiornata[0].accesso_completo
+      )
+    };
+
     // Emit real-time update alla room dell'impianto
-    emitCondivisioneUpdate(condivisione.impianto_id, condivisioneAggiornata[0], 'accepted');
+    emitCondivisioneUpdate(condivisione.impianto_id, condivisioneConRuolo, 'accepted');
+
+    // Emit anche alla room personale di chi ha invitato (backup se fuori dalla room impianto)
+    socketManager.emitToUser(condivisione.invitato_da, WS_EVENTS.CONDIVISIONE_ACCEPTED, condivisioneConRuolo);
 
     // Notifica chi ha inviato l'invito
     emitNotificationToUser(condivisione.invitato_da, {
@@ -719,7 +767,20 @@ export const rifiutaInvito = async (req: Request, res: Response) => {
 
     console.log(`❌ Invito ${condivisioneId} rifiutato da user ${userId}`);
 
-    // Notifica chi ha inviato l'invito
+    // Emit CONDIVISIONE_REJECTED alla room dell'impianto per aggiornare la lista
+    // Questo permette a chi sta guardando la lista condivisioni di vederla aggiornarsi
+    const condivisioneRifiutata = {
+      ...condivisione,
+      stato: 'rifiutato',
+      utente_id: userId
+    };
+    emitCondivisioneUpdate(condivisione.impianto_id, condivisioneRifiutata, 'removed');
+
+    // Emit anche alla room personale di chi ha invitato
+    socketManager.emitToUser(condivisione.invitato_da, WS_EVENTS.INVITE_REJECTED, condivisioneRifiutata);
+    console.log(`📡 INVITE_REJECTED emesso a user ${condivisione.invitato_da}`);
+
+    // Notifica chi ha inviato l'invito (toast)
     emitNotificationToUser(condivisione.invitato_da, {
       type: 'invite_rejected',
       title: 'Invito rifiutato',

@@ -18,8 +18,8 @@ export const getScene = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
 
-    // Verifica che l'utente abbia accesso all'impianto
-    const [impianti]: any = await query(
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
+    const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
@@ -53,8 +53,8 @@ export const createScena = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Nome e azioni sono richiesti' });
     }
 
-    // Verifica che l'utente abbia accesso all'impianto
-    const [impianti]: any = await query(
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
+    const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
@@ -393,8 +393,8 @@ export const getSunTimes = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
 
-    // Verifica accesso all'impianto
-    const [impianti]: any = await query(
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
+    const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
@@ -440,8 +440,8 @@ export const getUpcomingSun = async (req: AuthRequest, res: Response) => {
     const { impiantoId } = req.params;
     const days = parseInt(req.query.days as string) || 7;
 
-    // Verifica accesso all'impianto
-    const [impianti]: any = await query(
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
+    const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
        WHERE i.id = ? AND (i.utente_id = ? OR c.utente_id = ?)`,
@@ -489,7 +489,7 @@ export const autoPopulateDefaultScenes = async (req: AuthRequest, res: Response)
     console.log('[auto-populate] Impianto ID ricevuto:', impiantoId);
     console.log('[auto-populate] User ID:', req.user!.userId);
 
-    // Verifica accesso all'impianto
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'

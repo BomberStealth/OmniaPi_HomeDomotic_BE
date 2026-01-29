@@ -265,6 +265,10 @@ router.put('/admin/users/:userId/permissions', authMiddleware, roleMiddleware(Us
 router.put('/admin/users/:userId/role', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.updateUserRole);
 router.delete('/admin/users/:userId', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.deleteUser);
 router.post('/admin/cleanup-scenes', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.cleanupOrphanActions);
+router.get('/admin/impianti/search', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.searchImpianti);
+// Admin mode - entra/esci da impianto con condivisione temporanea
+router.post('/admin/enter-impianto/:impiantoId', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.enterImpiantoAsAdmin);
+router.post('/admin/exit-impianto', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.exitImpiantoAsAdmin);
 
 // ============================================
 // NOTIFICATIONS ROUTES (Firebase Cloud Messaging)

@@ -27,6 +27,8 @@ export const requireImpiantoAccess = async (
     const impiantoId = req.params.impiantoId || req.params.id;
     const userId = req.user?.userId;
 
+    console.log('🔐 requireImpiantoAccess - userId:', userId, 'ruolo:', req.user?.ruolo, 'impiantoId:', impiantoId);
+
     if (!impiantoId) {
       return res.status(400).json({
         success: false,
@@ -39,6 +41,25 @@ export const requireImpiantoAccess = async (
         success: false,
         error: 'Autenticazione richiesta'
       });
+    }
+
+    // Admin ha sempre accesso a tutti gli impianti
+    if (req.user?.ruolo === 'admin') {
+      // Recupera comunque i dati dell'impianto per i controller
+      const impianti = await query(
+        'SELECT * FROM impianti WHERE id = ? LIMIT 1',
+        [impiantoId]
+      ) as RowDataPacket[];
+
+      if (impianti.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Impianto non trovato'
+        });
+      }
+
+      req.impianto = impianti[0];
+      return next();
     }
 
     // Query unificata: verifica proprietà O condivisione accettata
@@ -219,7 +240,7 @@ export const requireStanzaAccess = async (
   next: NextFunction
 ) => {
   try {
-    const stanzaId = req.params.stanzaId || req.body.stanzaId;
+    const stanzaId = req.params.stanzaId || req.params.id || req.body.stanzaId;
     const userId = req.user?.userId;
     const ruolo = req.user?.ruolo;
 

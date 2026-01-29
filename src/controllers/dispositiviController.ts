@@ -19,7 +19,7 @@ export const getAllDispositivi = async (req: AuthRequest, res: Response) => {
   try {
     const { impiantoId } = req.params;
 
-    // Verifica accesso all'impianto
+    // Verifica accesso all'impianto (include admin tramite condivisione temporanea)
     const impianti: any = await query(
       `SELECT i.* FROM impianti i
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
