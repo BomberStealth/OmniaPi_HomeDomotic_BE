@@ -6,6 +6,18 @@ import { pool } from '../config/database';
 // ============================================
 
 /**
+ * Verifica se una tabella esiste
+ */
+const tableExists = async (connection: any, table: string): Promise<boolean> => {
+  const [rows]: any = await connection.query(
+    `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+    [table]
+  );
+  return rows.length > 0;
+};
+
+/**
  * Verifica se una colonna esiste nella tabella
  */
 const columnExists = async (connection: any, table: string, column: string): Promise<boolean> => {
@@ -113,6 +125,29 @@ export const runOmniapiMigration = async () => {
       console.log('✅ Aggiunto indice idx_device_type');
     } else {
       console.log('⏭️ idx_device_type già presente');
+    }
+
+    // 8. Crea tabella provision_tokens per associazione gateway tramite codice
+    if (!(await tableExists(connection, 'provision_tokens'))) {
+      await connection.query(`
+        CREATE TABLE provision_tokens (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(6) NOT NULL UNIQUE,
+          user_id INT NOT NULL,
+          impianto_id INT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          expires_at DATETIME NOT NULL,
+          used BOOLEAN DEFAULT FALSE,
+          gateway_mac VARCHAR(17) DEFAULT NULL,
+          INDEX idx_code (code),
+          INDEX idx_expires (expires_at),
+          FOREIGN KEY (user_id) REFERENCES utenti(id) ON DELETE CASCADE,
+          FOREIGN KEY (impianto_id) REFERENCES impianti(id) ON DELETE CASCADE
+        )
+      `);
+      console.log('✅ Creata tabella provision_tokens');
+    } else {
+      console.log('⏭️ provision_tokens già presente');
     }
 
     console.log('✅ Migrazione OmniaPi completata');

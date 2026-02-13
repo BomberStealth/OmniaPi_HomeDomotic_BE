@@ -9,18 +9,21 @@ import {
   updateNodeState,
   getAllNodes,
   updateLedState,
-  getLedState
+  getLedState,
+  getGatewayBusyState
 } from '../services/omniapiState';
 import {
   emitOmniapiGatewayUpdate,
   emitOmniapiNodeUpdate,
   emitOmniapiNodesUpdate,
-  emitOmniapiLedUpdate
+  emitOmniapiLedUpdate,
+  getImpiantoIdForMac
 } from '../socket';
 import {
   updateGatewayFromMqtt,
-  markGatewayOffline
+  markGatewayOffline,
 } from '../controllers/gatewayController';
+import { emitGatewayUpdate } from '../socket';
 import * as notificationService from '../services/notificationService';
 // Device Type Registry - Single Source of Truth
 import {
@@ -30,7 +33,103 @@ import {
   getDeviceTypeFromFirmwareId
 } from './deviceTypes';
 
+// ============================================
+// RECONCILIATION STATE
+// ============================================
+let firstHeartbeatDone = false;
+let lastReconcileTime = 0;
+const RECONCILE_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+// Deferred orphan cleanup: don't factory-reset immediately when no impianto,
+// wait for next cycle to avoid racing with wizard (commission → create impianto)
+let pendingOrphanCleanup: { pending: boolean; timestamp: number } = { pending: false, timestamp: 0 };
+
+// Node online state tracking: detect online↔offline transitions (not every heartbeat)
+const previousNodeOnlineState = new Map<string, boolean>();
+
+// Low heap warning throttle: max once every 30 minutes
+let lastLowHeapWarningTime = 0;
+const LOW_HEAP_WARNING_INTERVAL = 30 * 60 * 1000; // 30 minutes
+const LOW_HEAP_THRESHOLD = 40000;
+
 dotenv.config();
+
+// ============================================
+// GATEWAY ONLINE MAP (in-memory tracking)
+// ============================================
+
+interface OnlineGateway {
+  mac: string;
+  ip: string;
+  version: string;
+  uptime: number;
+  nodes_count: number;
+  eth_connected: boolean;
+  public_ip: string;
+  last_seen: Date;
+}
+
+export const onlineGateways = new Map<string, OnlineGateway>();
+
+// IP pubblico del server (condiviso con i gateway sulla stessa rete)
+let serverPublicIp: string = '';
+
+const fetchPublicIp = async () => {
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json() as { ip: string };
+    serverPublicIp = data.ip;
+    console.log(`🌐 IP pubblico server: ${serverPublicIp}`);
+  } catch (error) {
+    console.error('❌ Errore fetch IP pubblico:', error);
+  }
+};
+
+// Fetch IP pubblico all'avvio e ogni 30 minuti
+fetchPublicIp();
+setInterval(fetchPublicIp, 30 * 60 * 1000);
+
+// Cleanup gateway che non pubblicano da più di 90 secondi
+setInterval(() => {
+  const now = Date.now();
+  for (const [mac, gw] of onlineGateways) {
+    if (now - gw.last_seen.getTime() > 90_000) {
+      onlineGateways.delete(mac);
+      console.log(`🧹 Gateway ${mac} rimosso dalla Map (timeout 90s)`);
+    }
+  }
+}, 60_000);
+
+// ============================================
+// SCAN & COMMISSION RESULTS (in-memory tracking)
+// ============================================
+
+interface ScanNode {
+  mac: string;
+  device_type: number;
+  firmware: string;
+  rssi: number;
+  commissioned: boolean;
+}
+
+interface ScanResults {
+  nodes: ScanNode[];
+  count: number;
+  timestamp: number;
+}
+
+interface CommissionResult {
+  success: boolean;
+  message: string;
+  timestamp: number;
+}
+
+export let scanResults: ScanResults | null = null;
+export const commissionResults = new Map<string, CommissionResult>();
+
+export const clearScanResults = () => {
+  scanResults = null;
+};
 
 // ============================================
 // CONFIGURAZIONE MQTT
@@ -147,6 +246,8 @@ export const connectMQTT = () => {
 
   mqttClient.on('connect', () => {
     console.log('✅ MQTT connesso con successo');
+    // Reset reconciliation flag so next heartbeat triggers full sync
+    firstHeartbeatDone = false;
     // Subscribe ai topic: Tasmota (stato, telemetria) + Shelly (energia) + OmniaPi
     const topics = [
       'stat/+/+',               // Tasmota stato
@@ -158,6 +259,9 @@ export const connectMQTT = () => {
       'omniapi/gateway/nodes',        // Lista nodi
       'omniapi/gateway/node/+/state', // Stato singolo nodo
       'omniapi/gateway/lwt',          // Last Will and Testament (offline)
+      // OmniaPi Scan & Commission results
+      'omniapi/gateway/scan/results',       // Scan results from gateway
+      'omniapi/gateway/commission/result',   // Commission result from gateway
       // OmniaPi LED Strip topics
       'omniapi/led/state'             // LED Strip state updates
     ];
@@ -191,6 +295,106 @@ export const tasmotaCommand = (topic: string, command: string, value?: any) => {
 };
 
 // ============================================
+// RECONCILIATION: Gateway ↔ Backend
+// ============================================
+
+const reconcileGatewayNodes = async (gatewayMac: string, gatewayNodes: string[]) => {
+  try {
+    // 1. If gateway is busy (scan, commission, etc.) → skip reconciliation entirely
+    const busyState = getGatewayBusyState();
+    if (busyState.busy) {
+      console.log(`[RECONCILE] Skipping — gateway busy with: ${busyState.operation}`);
+      return;
+    }
+
+    // Find impianto for this gateway
+    const gwRows = await query(
+      'SELECT impianto_id FROM gateways WHERE mac_address = ? AND impianto_id IS NOT NULL LIMIT 1',
+      [gatewayMac]
+    ) as any[];
+
+    if (!gwRows || gwRows.length === 0) {
+      if (gatewayNodes.length > 0) {
+        // 2. Deferred orphan cleanup: don't factory-reset immediately
+        if (!pendingOrphanCleanup.pending) {
+          // First time seeing orphans without impianto → flag it, wait for next cycle
+          pendingOrphanCleanup = { pending: true, timestamp: Date.now() };
+          console.log(`[RECONCILE] Gateway has ${gatewayNodes.length} orphan nodes but no impianto — flagging for deferred cleanup (will check again next cycle)`);
+        } else {
+          // 3. Already flagged → check if enough time has passed (at least one full cycle)
+          const elapsed = Date.now() - pendingOrphanCleanup.timestamp;
+          if (elapsed >= RECONCILE_INTERVAL) {
+            console.log(`[RECONCILE] Deferred cleanup confirmed (${Math.round(elapsed / 1000)}s elapsed) — sending factory-reset for ${gatewayNodes.length} orphan nodes`);
+            const client = getMQTTClient();
+            client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
+            pendingOrphanCleanup = { pending: false, timestamp: 0 };
+          } else {
+            console.log(`[RECONCILE] Deferred cleanup pending — only ${Math.round(elapsed / 1000)}s elapsed, waiting for full cycle`);
+          }
+        }
+      } else {
+        // No nodes and no impianto → clear any pending cleanup
+        if (pendingOrphanCleanup.pending) {
+          console.log(`[RECONCILE] Orphan nodes cleared (factory-reset already happened or nodes left) — cancelling deferred cleanup`);
+          pendingOrphanCleanup = { pending: false, timestamp: 0 };
+        }
+      }
+      return;
+    }
+
+    // Gateway has impianto → clear any pending orphan cleanup (wizard completed successfully)
+    if (pendingOrphanCleanup.pending) {
+      console.log(`[RECONCILE] Gateway now has impianto — cancelling deferred orphan cleanup`);
+      pendingOrphanCleanup = { pending: false, timestamp: 0 };
+    }
+
+    const impiantoId = gwRows[0].impianto_id;
+
+    // Get DB nodes for this impianto
+    const dbRows = await query(
+      `SELECT mac_address FROM dispositivi WHERE impianto_id = ? AND device_type IN ('omniapi_node', 'omniapi_led')`,
+      [impiantoId]
+    ) as any[];
+
+    const dbMacs = new Set((dbRows || []).map((r: any) => r.mac_address?.toUpperCase().replace(/-/g, ':')));
+    const gwMacs = new Set(gatewayNodes.map((m: string) => m.toUpperCase().replace(/-/g, ':')));
+
+    let matched = 0;
+    let removed = 0;
+    let markedOffline = 0;
+
+    // MAC in gateway but NOT in DB → orphan, delete from gateway
+    for (const mac of gwMacs) {
+      if (dbMacs.has(mac)) {
+        matched++;
+      } else {
+        console.log(`[RECONCILE] Removing orphan node ${mac} from gateway`);
+        omniapiDeleteNode(mac);
+        removed++;
+      }
+    }
+
+    // MAC in DB but NOT in gateway → mark offline
+    for (const mac of dbMacs) {
+      if (!gwMacs.has(mac)) {
+        console.log(`[RECONCILE] Node ${mac} in DB but not on gateway - marking offline`);
+        updateNodeState(mac, { online: false });
+        await query(
+          `UPDATE dispositivi SET stato = 'offline' WHERE mac_address = ? AND device_type IN ('omniapi_node', 'omniapi_led')`,
+          [mac]
+        );
+        markedOffline++;
+      }
+    }
+
+    console.log(`[RECONCILE] Gateway sync complete: ${matched} matched, ${removed} removed, ${markedOffline} marked offline`);
+    lastReconcileTime = Date.now();
+  } catch (error) {
+    console.error('[RECONCILE] Error during reconciliation:', error);
+  }
+};
+
+// ============================================
 // OMNIAPI HANDLER
 // ============================================
 
@@ -220,13 +424,39 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       });
       console.log(`⏱️ [TIMING-LED] Memory update: ${Date.now() - stateUpdateStart}ms`);
 
-      // Emit WebSocket event ONLY if changed
+      // Emit WebSocket event ONLY if changed (room-scoped)
       if (changed) {
         const wsEmitStart = Date.now();
-        emitOmniapiLedUpdate(ledState);
-        console.log(`⏱️ [TIMING-LED] WebSocket emit: ${Date.now() - wsEmitStart}ms`);
+        const ledImpiantoId = await getImpiantoIdForMac(data.mac);
+        emitOmniapiLedUpdate(ledState, ledImpiantoId);
+        console.log(`⏱️ [TIMING-LED] WebSocket emit: ${Date.now() - wsEmitStart}ms (impianto=${ledImpiantoId})`);
       }
       console.log(`⏱️ [TIMING-LED] Total processing: ${Date.now() - messageStart}ms (changed=${changed})`);
+      return;
+    }
+
+    // omniapi/gateway/scan/results (Scan results from gateway)
+    if (topic === 'omniapi/gateway/scan/results') {
+      console.log(`📡 Scan results received: ${data.count} nodes`);
+      scanResults = {
+        nodes: data.nodes || [],
+        count: data.count || 0,
+        timestamp: Date.now()
+      };
+      return;
+    }
+
+    // omniapi/gateway/commission/result (Commission result from gateway)
+    if (topic === 'omniapi/gateway/commission/result') {
+      console.log(`📡 Commission result: mac=${data.mac}, success=${data.success}`);
+      if (data.mac) {
+        const normalizedMac = data.mac.toUpperCase().replace(/-/g, ':');
+        commissionResults.set(normalizedMac, {
+          success: data.success,
+          message: data.message || '',
+          timestamp: Date.now()
+        });
+      }
       return;
     }
 
@@ -234,6 +464,8 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
     if (topic === 'omniapi/gateway/lwt') {
       console.log('📴 Gateway offline (LWT):', data.mac || payload);
       if (data.mac) {
+        const normalizedMac = data.mac.toUpperCase().replace(/-/g, ':');
+        onlineGateways.delete(normalizedMac);
         await markGatewayOffline(data.mac);
         // Aggiorna anche lo stato in-memory
         updateGatewayState({ ...data, online: false });
@@ -266,11 +498,199 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       return;
     }
 
-    // omniapi/gateway/status
+    // omniapi/gateway/status (includes LWT with online:false)
     if (topic === 'omniapi/gateway/status') {
       const { gateway, changed } = updateGatewayState(data);
+
+      // Lookup impianto for this gateway (used for all emissions in this block)
+      let gwImpiantoId: number | null = null;
+      if (data.mac) {
+        try {
+          const gwRows = await query('SELECT impianto_id FROM gateways WHERE mac_address = ? LIMIT 1', [data.mac]) as any[];
+          gwImpiantoId = gwRows.length > 0 ? gwRows[0].impianto_id : null;
+        } catch { /* ignore */ }
+      }
+
       if (changed) {
-        emitOmniapiGatewayUpdate(gateway);
+        emitOmniapiGatewayUpdate(gateway, gwImpiantoId);
+      }
+
+      // Parse nodes array from heartbeat (v1.7.7+)
+      if (data.nodes && Array.isArray(data.nodes) && data.nodes.length > 0) {
+        // Map firmware format {mac,type,fw,commissioned,rssi,online} to state format
+        const relayNodes = data.nodes
+          .filter((n: any) => isRelayFirmwareId(n.type))
+          .map((n: any) => ({
+            mac: n.mac,
+            online: n.online === true,
+            rssi: n.rssi ?? 0,
+            version: n.fw ?? '',
+          }));
+
+        const ledNodes = data.nodes.filter((n: any) => isLedFirmwareId(n.type));
+
+        if (relayNodes.length > 0) {
+          const { nodes: updatedNodes, changed: nodesChanged } = updateNodesFromList(relayNodes);
+          if (nodesChanged) {
+            emitOmniapiNodesUpdate(updatedNodes, gwImpiantoId);
+          }
+        }
+
+        // Update LED devices
+        ledNodes.forEach((led: any) => {
+          const result = updateLedState(led.mac, { online: led.online === true });
+          if (result.changed) {
+            emitOmniapiLedUpdate(result.led, gwImpiantoId);
+          }
+        });
+
+        // NODE ONLINE/OFFLINE NOTIFICATIONS — only on state change
+        if (gwImpiantoId) {
+          const allNodes = data.nodes as any[];
+          const currentOnlineMacs = new Set(
+            allNodes.filter((n: any) => n.online === true).map((n: any) => (n.mac as string).toUpperCase())
+          );
+          const allCurrentMacs = new Set(
+            allNodes.map((n: any) => (n.mac as string).toUpperCase())
+          );
+
+          // Check for nodes that went offline
+          for (const [mac, wasOnline] of previousNodeOnlineState) {
+            const isNowOnline = currentOnlineMacs.has(mac);
+            const isStillInList = allCurrentMacs.has(mac);
+            if (wasOnline && !isNowOnline) {
+              // Was online, now offline (or missing from list)
+              console.log(`[NODE-STATUS] Node ${mac} went OFFLINE`);
+              // Look up node name
+              query(
+                `SELECT nome FROM dispositivi WHERE UPPER(mac_address) = ? AND impianto_id = ? LIMIT 1`,
+                [mac, gwImpiantoId]
+              ).then((rows: any) => {
+                const nome = rows?.[0]?.nome || mac;
+                notificationService.sendAndSave({
+                  impiantoId: gwImpiantoId!,
+                  type: 'device_offline',
+                  title: 'Nodo offline',
+                  body: `Il nodo ${nome} non risponde`,
+                  data: { mac, timestamp: new Date().toISOString() }
+                }).catch(err => console.error('[NODE-STATUS] Error sending offline notification:', err));
+              }).catch(() => {});
+            } else if (!wasOnline && isNowOnline) {
+              // Was offline, now online
+              console.log(`[NODE-STATUS] Node ${mac} came ONLINE`);
+              query(
+                `SELECT nome FROM dispositivi WHERE UPPER(mac_address) = ? AND impianto_id = ? LIMIT 1`,
+                [mac, gwImpiantoId]
+              ).then((rows: any) => {
+                const nome = rows?.[0]?.nome || mac;
+                notificationService.sendAndSave({
+                  impiantoId: gwImpiantoId!,
+                  type: 'device_online',
+                  title: 'Nodo online',
+                  body: `Il nodo ${nome} è tornato online`,
+                  data: { mac, timestamp: new Date().toISOString() }
+                }).catch(err => console.error('[NODE-STATUS] Error sending online notification:', err));
+              }).catch(() => {});
+            }
+          }
+
+          // Update tracked state for next heartbeat
+          for (const node of allNodes) {
+            const mac = (node.mac as string).toUpperCase();
+            previousNodeOnlineState.set(mac, node.online === true);
+          }
+        }
+      }
+
+      // LOW HEAP WARNING
+      if (data.heap_free !== undefined && data.heap_free < LOW_HEAP_THRESHOLD && gwImpiantoId) {
+        const now = Date.now();
+        if (now - lastLowHeapWarningTime > LOW_HEAP_WARNING_INTERVAL) {
+          lastLowHeapWarningTime = now;
+          const heapKb = Math.round(data.heap_free / 1024);
+          console.warn(`[HEAP-WARNING] Gateway heap low: ${data.heap_free} bytes (${heapKb} KB)`);
+          notificationService.sendAndSave({
+            impiantoId: gwImpiantoId,
+            type: 'system',
+            title: 'Memoria gateway bassa',
+            body: `Heap libero: ${heapKb} KB. Riavvio consigliato.`,
+            data: { heap_free: data.heap_free, timestamp: new Date().toISOString() }
+          }).catch(err => console.error('[HEAP-WARNING] Error sending notification:', err));
+        }
+      }
+
+      // Aggiorna onlineGateways Map
+      if (data.mac) {
+        const normalizedMac = data.mac.toUpperCase().replace(/-/g, ':');
+        if (data.online !== false) {
+          onlineGateways.set(normalizedMac, {
+            mac: normalizedMac,
+            ip: data.ip || '',
+            version: data.version || '',
+            uptime: data.uptime || 0,
+            nodes_count: data.nodes_count ?? data.node_count ?? data.nodeCount ?? 0,
+            eth_connected: data.eth_connected ?? false,
+            public_ip: serverPublicIp,
+            last_seen: new Date()
+          });
+
+          // RECONCILIATION: first heartbeat or periodic (every 5 min)
+          if (data.nodes && Array.isArray(data.nodes)) {
+            const gwNodeMacs = data.nodes.map((n: any) => n.mac).filter(Boolean);
+            const now = Date.now();
+
+            if (!firstHeartbeatDone) {
+              firstHeartbeatDone = true;
+              console.log('[RECONCILE] First heartbeat — triggering full reconciliation');
+              reconcileGatewayNodes(data.mac, gwNodeMacs).catch(e =>
+                console.error('[RECONCILE] Error:', e)
+              );
+            } else if (now - lastReconcileTime > RECONCILE_INTERVAL) {
+              // Periodic: check if count mismatch
+              const gwCount = gwNodeMacs.length;
+              // Quick DB count check
+              query(
+                `SELECT COUNT(*) as cnt FROM dispositivi WHERE impianto_id = (SELECT impianto_id FROM gateways WHERE mac_address = ? AND impianto_id IS NOT NULL LIMIT 1) AND device_type IN ('omniapi_node', 'omniapi_led')`,
+                [data.mac]
+              ).then((rows: any) => {
+                const dbCount = rows?.[0]?.cnt ?? 0;
+                if (gwCount !== dbCount) {
+                  console.log(`[RECONCILE] Count mismatch (gw=${gwCount}, db=${dbCount}) — triggering reconciliation`);
+                  reconcileGatewayNodes(data.mac, gwNodeMacs).catch(e =>
+                    console.error('[RECONCILE] Error:', e)
+                  );
+                } else {
+                  lastReconcileTime = now;
+                }
+              }).catch(() => {});
+            }
+          }
+        } else {
+          onlineGateways.delete(normalizedMac);
+        }
+      }
+
+      // Handle offline (LWT arrives on same topic with online:false)
+      if (data.online === false && data.mac) {
+        console.log('📴 Gateway offline (LWT on status topic):', data.mac);
+        await markGatewayOffline(data.mac);
+
+        // Recupera impianto_id e invia notifica push
+        const gateways = await query(
+          'SELECT impianto_id FROM gateways WHERE mac_address = ?',
+          [data.mac]
+        ) as any[];
+
+        if (gateways && gateways.length > 0 && gateways[0].impianto_id) {
+          notificationService.sendAndSave({
+            impiantoId: gateways[0].impianto_id,
+            type: 'gateway_offline',
+            title: '⚠️ Gateway Offline',
+            body: 'Il gateway OmniaPi non è raggiungibile',
+            data: { mac: data.mac, timestamp: new Date().toISOString() }
+          }).catch(err => console.error('Error sending offline notification:', err));
+        }
+        return;
       }
 
       // Registra/aggiorna gateway nel database
@@ -291,26 +711,26 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       if (data.nodes && Array.isArray(data.nodes)) {
         console.log(`📡 [DEBUG] Nodes list received: ${data.nodes.length} nodes`);
 
-        // Usa Device Type Registry per filtrare i dispositivi
-        // LED: firmwareId 0x10 (16) o 0x11 (17)
-        // Relay: firmwareId 0x01 (1) o 0x02 (2)
         const relayNodes = data.nodes.filter((n: any) => isRelayFirmwareId(n.deviceType));
         const ledNodes = data.nodes.filter((n: any) => isLedFirmwareId(n.deviceType));
 
-        // FIX: Aggiorna node_count nel gateway quando riceviamo la lista nodi
+        // Lookup impianto for this gateway
+        let nodesImpiantoId: number | null = null;
         if (data.gateway_mac) {
           await updateGatewayFromMqtt(data.gateway_mac, undefined, undefined, data.nodes.length);
+          try {
+            const gwRows = await query('SELECT impianto_id FROM gateways WHERE mac_address = ? LIMIT 1', [data.gateway_mac]) as any[];
+            nodesImpiantoId = gwRows.length > 0 ? gwRows[0].impianto_id : null;
+          } catch { /* ignore */ }
         }
 
         console.log(`📡 [DEBUG] Filtered: ${relayNodes.length} relay nodes, ${ledNodes.length} LED strips`);
 
-        // Log e aggiorna solo i relay nodes in nodesState
         const { nodes: updatedNodes, changed: nodesChanged } = updateNodesFromList(relayNodes);
         if (nodesChanged) {
-          emitOmniapiNodesUpdate(updatedNodes);
+          emitOmniapiNodesUpdate(updatedNodes, nodesImpiantoId);
         }
 
-        // Aggiorna i LED strip in ledDevicesState
         ledNodes.forEach((led: any) => {
           let result;
           if (led.ledState) {
@@ -324,15 +744,13 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
               online: led.online ?? true
             });
           } else {
-            // LED senza stato dettagliato - aggiorna solo online
             result = updateLedState(led.mac, { online: led.online ?? true });
           }
           if (result.changed) {
-            emitOmniapiLedUpdate(result.led);
+            emitOmniapiLedUpdate(result.led, nodesImpiantoId);
           }
         });
 
-        // Sync solo relay nodes al database
         await syncNodesToDatabase(relayNodes);
       }
       return;
@@ -362,9 +780,10 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
       if (nodeUpdate && changed) {
         const wsEmitStart = Date.now();
+        const nodeImpiantoId = await getImpiantoIdForMac(mac);
         console.log(`📡 [DEBUG] Emitting node update (CHANGED):`, JSON.stringify(nodeUpdate));
-        emitOmniapiNodeUpdate(nodeUpdate);
-        console.log(`⏱️ [TIMING] WebSocket emit: ${Date.now() - wsEmitStart}ms`);
+        emitOmniapiNodeUpdate(nodeUpdate, nodeImpiantoId);
+        console.log(`⏱️ [TIMING] WebSocket emit: ${Date.now() - wsEmitStart}ms (impianto=${nodeImpiantoId})`);
 
         // Sync stato al database
         const dbSyncStart = Date.now();
@@ -473,13 +892,16 @@ const syncNodeStateToDatabase = async (mac: string, state: {
 export const omniapiCommand = (nodeMac: string, channel: number, action: 'on' | 'off' | 'toggle') => {
   const commandStart = Date.now();
   const client = getMQTTClient();
+  // Frontend uses 1-based channels, firmware uses 0-based
+  const fwChannel = channel > 0 ? channel - 1 : 0;
   const payload = JSON.stringify({
-    node_mac: nodeMac,
-    channel,
+    mac: nodeMac,
+    channel: fwChannel,
     action
   });
-  console.log(`📡 [DEBUG] Sending MQTT command: topic=omniapi/gateway/command, payload=${payload}`);
-  client.publish('omniapi/gateway/command', payload, (err) => {
+  const topic = 'omniapi/gateway/cmd/relay';
+  console.log(`📡 [DEBUG] Sending MQTT command: topic=${topic}, payload=${payload}`);
+  client.publish(topic, payload, (err) => {
     const publishTime = Date.now() - commandStart;
     if (err) {
       console.error(`⏱️ [TIMING] MQTT publish ERROR after ${publishTime}ms:`, err);
@@ -487,5 +909,18 @@ export const omniapiCommand = (nodeMac: string, channel: number, action: 'on' | 
       console.log(`⏱️ [TIMING] MQTT publish confirmed: ${publishTime}ms`);
     }
   });
-  console.log(`📡 OmniaPi command sent: ${nodeMac} ch${channel} ${action}`);
+  console.log(`📡 OmniaPi command sent: ${nodeMac} ch${fwChannel} ${action}`);
+};
+
+export const omniapiDeleteNode = (nodeMac: string) => {
+  const client = getMQTTClient();
+  const payload = JSON.stringify({ mac: nodeMac });
+  const topic = 'omniapi/gateway/cmd/delete-node';
+  client.publish(topic, payload, (err) => {
+    if (err) {
+      console.error(`❌ MQTT delete-node publish error:`, err);
+    } else {
+      console.log(`🗑️ MQTT delete-node sent: ${nodeMac}`);
+    }
+  });
 };

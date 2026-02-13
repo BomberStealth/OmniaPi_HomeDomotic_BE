@@ -3,6 +3,8 @@ import { query } from '../config/database';
 import { UserRole } from '../types';
 import { RowDataPacket } from 'mysql2';
 import crypto from 'crypto';
+import { omniapiDeleteNode, getMQTTClient } from '../config/mqtt';
+import { removeNode, removeLedDevice } from '../services/omniapiState';
 
 // ============================================
 // CONTROLLER IMPIANTI
@@ -370,18 +372,48 @@ export const updateImpianto = async (req: Request, res: Response) => {
   }
 };
 
-// Elimina impianto
+// Elimina impianto con cleanup gateway
 export const deleteImpianto = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Prima resetta i gateway associati a questo impianto
+    // 1. Recupera tutti i dispositivi OmniaPi dell'impianto
+    const dispositivi = await query(
+      `SELECT mac_address, device_type FROM dispositivi WHERE impianto_id = ? AND device_type IN ('omniapi_node', 'omniapi_led')`,
+      [id]
+    ) as any[];
+
+    const nodeCount = dispositivi?.length ?? 0;
+    if (nodeCount > 0) {
+      console.log(`[DELETE-IMPIANTO] Decommissioning ${nodeCount} nodes before deleting impianto ${id}`);
+
+      // 2. Per ogni nodo: pubblica delete-node + rimuovi da memoria
+      for (const d of dispositivi) {
+        if (d.mac_address) {
+          omniapiDeleteNode(d.mac_address);
+          removeNode(d.mac_address);
+          if (d.device_type === 'omniapi_led') removeLedDevice(d.mac_address);
+        }
+      }
+
+      // 3. Pubblica factory-reset al gateway
+      try {
+        const client = getMQTTClient();
+        client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
+        console.log(`[DELETE-IMPIANTO] Factory-reset command sent to gateway`);
+      } catch (mqttErr) {
+        // Gateway offline — procedi comunque, la riconciliazione pulirà al prossimo avvio
+        console.log(`[DELETE-IMPIANTO] Gateway offline, skipping MQTT factory-reset`);
+      }
+    }
+
+    // 4. Resetta i gateway associati a questo impianto
     await query(
       `UPDATE gateways SET impianto_id = NULL, status = 'pending' WHERE impianto_id = ?`,
       [id]
     );
 
-    // Poi elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle)
+    // 5. Elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle)
     await query('DELETE FROM impianti WHERE id = ?', [id]);
 
     res.json({

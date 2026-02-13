@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, raw } from 'express';
 import * as authController from '../controllers/authController';
 import * as impiantiController from '../controllers/impiantiController';
 import * as dispositiviController from '../controllers/dispositiviController';
@@ -18,6 +18,7 @@ import * as notificationController from '../controllers/notificationController';
 import * as ledController from '../controllers/ledController';
 import * as sessionsController from '../controllers/sessionsController';
 import * as condivisioniController from '../controllers/condivisioniController';
+import * as otaController from '../controllers/otaController';
 import deviceRoutes from './deviceRoutes';
 import { authMiddleware, roleMiddleware } from '../middleware/auth';
 import { requireImpiantoAccess, requireDeviceControl, requireStanzaAccess } from '../middleware/impiantoAccess';
@@ -36,7 +37,7 @@ const router = Router();
 // VERSION ENDPOINT (per auto-update frontend)
 // ============================================
 router.get('/version', (req, res) => {
-  res.json({ version: 'v1.3.22' });
+  res.json({ version: 'v1.6.0' });
 });
 
 // ============================================
@@ -215,6 +216,17 @@ router.post('/smarthome/test', authMiddleware, smartHomeController.testCommand);
 router.post('/gateway/register', gatewayController.registerGateway);
 // Lista gateway in attesa di associazione (qualsiasi utente autenticato)
 router.get('/gateway/pending', authMiddleware, gatewayController.getPendingGateways);
+// Scan nodi non commissionati (via MQTT al gateway)
+router.post('/gateway/scan/start', authMiddleware, gatewayController.startScan);
+router.post('/gateway/scan/stop', authMiddleware, gatewayController.stopScan);
+router.get('/gateway/scan/results', authMiddleware, gatewayController.getScanResults);
+// Commissioning nodi (via MQTT al gateway)
+router.post('/gateway/commission', authMiddleware, gatewayController.commissionNode);
+router.get('/gateway/commission/result/:mac', authMiddleware, gatewayController.getCommissionResult);
+// Scan rete locale per trovare gateway OmniaPi
+router.get('/gateway/scan', authMiddleware, gatewayController.scanGateways);
+// Discover gateway sulla stessa rete (match IP pubblico)
+router.get('/gateway/discover', authMiddleware, gatewayController.discover);
 // Pulizia gateway orfani (solo admin)
 router.post('/gateway/cleanup-orphans', authMiddleware, roleMiddleware(UserRole.ADMIN), gatewayController.cleanupOrphanGateways);
 // Reset manuale gateway a pending (utente autenticato con accesso)
@@ -269,6 +281,13 @@ router.get('/admin/impianti/search', authMiddleware, roleMiddleware(UserRole.ADM
 // Admin mode - entra/esci da impianto con condivisione temporanea
 router.post('/admin/enter-impianto/:impiantoId', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.enterImpiantoAsAdmin);
 router.post('/admin/exit-impianto', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.exitImpiantoAsAdmin);
+
+// OTA ROUTES (Admin only — firmware updates via gateway proxy)
+router.post('/admin/ota/gateway', authMiddleware, roleMiddleware(UserRole.ADMIN), raw({ type: 'application/octet-stream', limit: '10mb' }), otaController.uploadGatewayFirmware);
+router.post('/admin/ota/node/:mac', authMiddleware, roleMiddleware(UserRole.ADMIN), raw({ type: 'application/octet-stream', limit: '10mb' }), otaController.uploadNodeFirmware);
+router.get('/admin/ota/status', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.getOtaStatus);
+// Gateway busy status + live info
+router.get('/admin/gateway/status', authMiddleware, otaController.getGatewayFullStatus);
 
 // ============================================
 // NOTIFICATIONS ROUTES (Firebase Cloud Messaging)

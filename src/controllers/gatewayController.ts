@@ -2,6 +2,10 @@ import { Request, Response } from 'express';
 import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
 import { emitGatewayUpdate } from '../socket';
+import { discoverDevices } from '../services/presenceService';
+import { onlineGateways, scanResults, clearScanResults, commissionResults } from '../config/mqtt';
+import { getMQTTClient } from '../config/mqtt';
+import { acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
 
 // ============================================
 // GATEWAY CONTROLLER
@@ -240,13 +244,29 @@ export const associateGateway = async (req: AuthRequest, res: Response) => {
     const normalizedMac = mac.toUpperCase().replace(/-/g, ':');
 
     // Verifica che il gateway esista
-    const gateways: any = await query(
+    let gateways: any = await query(
       'SELECT * FROM gateways WHERE mac_address = ?',
       [normalizedMac]
     );
 
+    // Se il gateway non esiste nel DB (es. trovato via scan rete), crealo al volo
     if (!gateways || gateways.length === 0) {
-      return res.status(404).json({ error: 'Gateway non trovato. Assicurati che sia online.' });
+      const { ip, version } = req.body;
+      console.log(`📝 Gateway ${normalizedMac} non trovato nel DB, creazione automatica...`);
+      const insertResult: any = await query(
+        `INSERT INTO gateways (mac_address, ip_address, firmware_version, nome, status, last_seen, mqtt_connected)
+         VALUES (?, ?, ?, ?, 'pending', NOW(), FALSE)`,
+        [normalizedMac, ip || null, version || null, nome || 'Gateway OmniaPi']
+      );
+      // Rileggi il record appena creato
+      gateways = await query(
+        'SELECT * FROM gateways WHERE id = ?',
+        [insertResult.insertId]
+      );
+      if (!gateways || gateways.length === 0) {
+        return res.status(500).json({ error: 'Errore nella creazione del gateway' });
+      }
+      console.log(`✅ Gateway ${normalizedMac} creato con ID ${insertResult.insertId}`);
     }
 
     const gateway = gateways[0];
@@ -426,6 +446,94 @@ export const updateGateway = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Errore updateGateway:', error);
     res.status(500).json({ error: 'Errore durante l\'aggiornamento del gateway' });
+  }
+};
+
+/**
+ * GET /api/gateway/scan
+ * Scansiona la rete locale per trovare gateway OmniaPi
+ * Usa ping sweep + verifica endpoint /api/status su ogni IP trovato
+ */
+export const scanGateways = async (req: AuthRequest, res: Response) => {
+  try {
+    // Rileva subnet dalla rete locale
+    let subnet = '192.168.1';
+    try {
+      const { exec } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(exec);
+      const { stdout } = await execAsync("ip route | grep default | awk '{print $3}' | head -1");
+      const gatewayIp = stdout.trim();
+      if (gatewayIp) {
+        const parts = gatewayIp.split('.');
+        if (parts.length === 4) {
+          subnet = `${parts[0]}.${parts[1]}.${parts[2]}`;
+        }
+      }
+    } catch {
+      // Fallback a 192.168.1
+    }
+
+    console.log(`🔍 Scan gateway OmniaPi sulla subnet ${subnet}.0/24...`);
+
+    // Usa il discovery esistente per trovare tutti i device in rete
+    const devices = await discoverDevices(subnet);
+    console.log(`[SCAN] Found ${devices.length} hosts:`, devices.map((d: any) => d.ip_address));
+    const gateways: any[] = [];
+
+    // Prova ogni IP trovato in parallelo (con timeout 2s)
+    const checkPromises = devices.map(async (device: any) => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+
+        console.log(`[SCAN] Trying http://${device.ip_address}/api/status ...`);
+        const response = await fetch(`http://${device.ip_address}/api/status`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          console.log(`[SCAN] ${device.ip_address} responded ${response.status}`);
+          return null;
+        }
+
+        const data: any = await response.json();
+        console.log(`[SCAN] ${device.ip_address} responded OK:`, JSON.stringify(data));
+
+        // Verifica se è un gateway OmniaPi:
+        // Accetta sia "version" che "firmware" come campo versione
+        // Deve avere mac address per essere identificabile
+        const version = data.version || data.firmware;
+        if (data && data.mac && version) {
+          return {
+            ip: device.ip_address,
+            mac: data.mac || device.mac_address,
+            version: version,
+            nodeCount: data.nodeCount || data.nodes_count || data.node_count || 0,
+            mqttConnected: data.mqttConnected || data.mqtt_connected || false,
+            uptime: data.uptime || 0,
+            source: 'network_scan' as const,
+          };
+        }
+        console.log(`[SCAN] ${device.ip_address} not a gateway (missing mac or version/firmware)`);
+      } catch (err: any) {
+        // Non è un gateway o non risponde
+      }
+      return null;
+    });
+
+    const results = await Promise.all(checkPromises);
+    for (const gw of results) {
+      if (gw) gateways.push(gw);
+    }
+
+    console.log(`✅ Scan completato: ${gateways.length} gateway trovati su ${devices.length} host`);
+
+    res.json({ gateways });
+  } catch (error: any) {
+    console.error('Errore scanGateways:', error);
+    res.status(500).json({ error: error.message || 'Errore durante la scansione' });
   }
 };
 
@@ -616,6 +724,209 @@ export const resetGateway = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Errore resetGateway:', error);
     res.status(500).json({ error: 'Errore durante il reset del gateway' });
+  }
+};
+
+// ============================================
+// DISCOVER - Trova gateway sulla stessa rete (via IP pubblico)
+// ============================================
+
+/**
+ * GET /api/gateway/discover
+ * Filtra i gateway online che hanno lo stesso IP pubblico dell'utente
+ * Per ogni gateway controlla nel DB se è già associato a un impianto
+ */
+export const discover = async (req: AuthRequest, res: Response) => {
+  try {
+    // IP dell'utente (da nginx X-Forwarded-For o socket diretto)
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = typeof forwarded === 'string'
+      ? forwarded.split(',')[0].trim()
+      : req.socket.remoteAddress || '';
+
+    // Normalizza IPv6-mapped IPv4 (::ffff:127.0.0.1 → 127.0.0.1)
+    const normalizedIp = clientIp.replace(/^::ffff:/, '');
+
+    // Se l'IP è locale/privato, l'utente è sulla stessa rete del backend
+    // → mostra TUTTI i gateway online (sono per forza sulla stessa LAN)
+    const isLocalIp = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|localhost)/.test(normalizedIp);
+
+    console.log(`🔍 [discover] clientIp=${clientIp}, normalized=${normalizedIp}, isLocal=${isLocalIp}, onlineGateways=${onlineGateways.size}`);
+
+    const matchingGateways: any[] = [];
+    for (const [, gw] of onlineGateways) {
+      if (isLocalIp || gw.public_ip === normalizedIp) {
+        matchingGateways.push(gw);
+      }
+    }
+
+    // Per ogni gateway, controlla nel DB se è associato a un impianto
+    const results = await Promise.all(
+      matchingGateways.map(async (gw) => {
+        const existing: any = await query(
+          `SELECT g.impianto_id, i.nome as impianto_nome
+           FROM gateways g
+           LEFT JOIN impianti i ON g.impianto_id = i.id
+           WHERE g.mac_address = ? AND g.impianto_id IS NOT NULL`,
+          [gw.mac]
+        );
+
+        const isAssociated = existing && existing.length > 0;
+
+        return {
+          mac: gw.mac,
+          ip: gw.ip,
+          version: gw.version,
+          uptime: gw.uptime,
+          nodes_count: gw.nodes_count,
+          available: !isAssociated,
+          impianto_nome: isAssociated ? existing[0].impianto_nome : null
+        };
+      })
+    );
+
+    res.json({ success: true, gateways: results });
+  } catch (error) {
+    console.error('Errore discover:', error);
+    res.status(500).json({ error: 'Errore durante la discovery dei gateway' });
+  }
+};
+
+// ============================================
+// SCAN NODI - Avvia/ferma scan e leggi risultati
+// ============================================
+
+/**
+ * POST /api/gateway/scan/start
+ * Avvia scan nodi non commissionati via MQTT
+ */
+export const startScan = async (req: AuthRequest, res: Response) => {
+  if (!acquireGatewayLock('scan')) {
+    const busy = getGatewayBusyState();
+    return res.status(409).json({ error: 'Gateway occupato', operation: busy.operation, started_at: busy.started_at });
+  }
+
+  try {
+    const client = getMQTTClient();
+    clearScanResults();
+    client.publish('omniapi/gateway/scan', JSON.stringify({ action: 'start' }));
+    releaseGatewayLock(); // Fire-and-forget: gateway gestisce la scan autonomamente
+    console.log('🔍 Scan nodi avviato via MQTT');
+    res.json({ success: true, message: 'Scan avviato' });
+  } catch (error) {
+    releaseGatewayLock();
+    console.error('Errore startScan:', error);
+    res.status(500).json({ error: 'Errore durante l\'avvio dello scan' });
+  }
+};
+
+/**
+ * POST /api/gateway/scan/stop
+ * Ferma scan nodi via MQTT
+ */
+export const stopScan = async (req: AuthRequest, res: Response) => {
+  try {
+    const client = getMQTTClient();
+    client.publish('omniapi/gateway/scan', JSON.stringify({ action: 'stop' }));
+    releaseGatewayLock(); // Release scan lock
+    console.log('🛑 Scan nodi fermato via MQTT');
+    res.json({ success: true, message: 'Scan fermato' });
+  } catch (error) {
+    releaseGatewayLock();
+    console.error('Errore stopScan:', error);
+    res.status(500).json({ error: 'Errore durante lo stop dello scan' });
+  }
+};
+
+/**
+ * GET /api/gateway/scan/results
+ * Ritorna i risultati dell'ultimo scan
+ */
+export const getScanResults = async (req: AuthRequest, res: Response) => {
+  try {
+    if (scanResults) {
+      res.json({ success: true, nodes: scanResults.nodes, count: scanResults.count });
+    } else {
+      res.json({ success: true, nodes: [], count: 0 });
+    }
+  } catch (error) {
+    console.error('Errore getScanResults:', error);
+    res.status(500).json({ error: 'Errore durante il recupero dei risultati scan' });
+  }
+};
+
+// ============================================
+// COMMISSIONING NODI
+// ============================================
+
+/**
+ * POST /api/gateway/commission
+ * Avvia commissioning di un nodo via MQTT
+ * Body: { mac: "XX:XX:XX:XX:XX:XX", name?: "Nome" }
+ */
+export const commissionNode = async (req: AuthRequest, res: Response) => {
+  if (!acquireGatewayLock('commission')) {
+    const busy = getGatewayBusyState();
+    return res.status(409).json({ error: 'Gateway occupato', operation: busy.operation, started_at: busy.started_at });
+  }
+
+  try {
+    const { mac, name } = req.body;
+
+    if (!mac) {
+      releaseGatewayLock();
+      return res.status(400).json({ error: 'MAC address richiesto' });
+    }
+
+    const normalizedMac = mac.toUpperCase().replace(/-/g, ':');
+
+    // Rimuovi eventuale risultato precedente per questo MAC
+    commissionResults.delete(normalizedMac);
+
+    const payload: any = { mac: normalizedMac };
+    if (name) payload.name = name;
+
+    const client = getMQTTClient();
+    client.publish('omniapi/gateway/commission', JSON.stringify(payload));
+    console.log(`🔧 Commissioning avviato per ${normalizedMac}`);
+
+    // Commission is a short operation — release after sending
+    releaseGatewayLock();
+    res.json({ success: true, message: 'Commissioning avviato' });
+  } catch (error) {
+    releaseGatewayLock();
+    console.error('Errore commissionNode:', error);
+    res.status(500).json({ error: 'Errore durante il commissioning' });
+  }
+};
+
+/**
+ * GET /api/gateway/commission/result/:mac
+ * Ritorna il risultato del commissioning per un MAC
+ */
+export const getCommissionResult = async (req: AuthRequest, res: Response) => {
+  try {
+    const { mac } = req.params;
+    const normalizedMac = mac.toUpperCase().replace(/-/g, ':');
+
+    const result = commissionResults.get(normalizedMac);
+
+    if (result) {
+      res.json({
+        success: true,
+        commissioned: result.success,
+        message: result.message
+      });
+    } else {
+      res.json({
+        success: true,
+        commissioned: null,
+        message: 'In attesa di risposta'
+      });
+    }
+  } catch (error) {
+    console.error('Errore getCommissionResult:', error);
+    res.status(500).json({ error: 'Errore durante il recupero del risultato' });
   }
 };
 

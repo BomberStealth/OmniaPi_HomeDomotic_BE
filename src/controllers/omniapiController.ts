@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
-import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState } from '../services/omniapiState';
-import { omniapiCommand } from '../config/mqtt';
+import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState, removeNode, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
+import { omniapiCommand, omniapiDeleteNode } from '../config/mqtt';
 import { query } from '../config/database';
-import { emitDispositivoUpdate } from '../socket';
+import { emitDispositivoUpdate, invalidateMacCache } from '../socket';
 
 // ============================================
 // OMNIAPI CONTROLLER
@@ -457,6 +457,9 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
 
     const nuovoDispositivo = dispositivo?.[0] || dispositivo;
 
+    // Invalida cache MAC→impianto (ora il MAC è associato a un impianto)
+    invalidateMacCache(mac);
+
     // Emit WebSocket per aggiornamento real-time
     emitDispositivoUpdate(parseInt(impiantoId), nuovoDispositivo, 'created');
 
@@ -479,6 +482,11 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
  * Rimuove un nodo dal database E da tutte le scene
  */
 export const unregisterNode = async (req: AuthRequest, res: Response) => {
+  if (!acquireGatewayLock('delete')) {
+    const busy = getGatewayBusyState();
+    return res.status(409).json({ error: 'Gateway occupato', operation: busy.operation, started_at: busy.started_at });
+  }
+
   try {
     const { id } = req.params;
     const deviceId = parseInt(id);
@@ -488,7 +496,7 @@ export const unregisterNode = async (req: AuthRequest, res: Response) => {
       `SELECT d.*, d.impianto_id FROM dispositivi d
        JOIN impianti i ON d.impianto_id = i.id
        LEFT JOIN condivisioni_impianto c ON i.id = c.impianto_id AND c.stato = 'accettato'
-       WHERE d.id = ? AND d.device_type = 'omniapi_node'
+       WHERE d.id = ? AND d.device_type IN ('omniapi_node', 'omniapi_led')
        AND (i.utente_id = ? OR c.utente_id = ?)`,
       [deviceId, req.user!.userId, req.user!.userId]
     );
@@ -505,17 +513,58 @@ export const unregisterNode = async (req: AuthRequest, res: Response) => {
     // 2. Elimina dal DB
     await query('DELETE FROM dispositivi WHERE id = ?', [deviceId]);
 
-    console.log(`🗑️ Nodo ${dispositivo.nome} (ID: ${deviceId}) eliminato. Scene aggiornate: ${sceneAggiornate}`);
+    // Invalida cache MAC→impianto (il MAC non è più associato)
+    if (dispositivo.mac_address) invalidateMacCache(dispositivo.mac_address);
+
+    // 3. Pubblica comando MQTT al gateway per rimuovere il nodo dalla mesh
+    const mac = dispositivo.mac_address;
+    let gatewayConfirmed = false;
+
+    console.log(`🔍 [DELETE-NODE] MAC from DB: "${mac}" (type: ${typeof mac})`);
+    if (mac) {
+      omniapiDeleteNode(mac);
+      removeNode(mac);
+      console.log(`🔍 [DELETE-NODE] MQTT publish + memory cleanup done for ${mac}`);
+
+      // Poll in-memory state to verify gateway processed the delete
+      const normalizedMac = mac.toUpperCase().replace(/-/g, ':');
+      const POLL_INTERVAL = 2000;
+      const POLL_TIMEOUT = 15000;
+      const pollStart = Date.now();
+
+      while (Date.now() - pollStart < POLL_TIMEOUT) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL));
+        const nodes = getAllNodes();
+        const stillExists = nodes.some(n => n.mac.toUpperCase().replace(/-/g, ':') === normalizedMac);
+        if (!stillExists) {
+          gatewayConfirmed = true;
+          console.log(`🔍 [DELETE-NODE] Gateway confirmed: ${mac} no longer in mesh`);
+          break;
+        }
+      }
+
+      if (!gatewayConfirmed) {
+        console.warn(`⚠️ [DELETE-NODE] Timeout: ${mac} may still be in gateway mesh`);
+      }
+    } else {
+      console.warn(`⚠️ [DELETE-NODE] No mac_address for device ID ${deviceId}, skipping MQTT`);
+      gatewayConfirmed = true; // No MAC = nothing to confirm
+    }
+
+    console.log(`🗑️ Nodo ${dispositivo.nome} (ID: ${deviceId}, MAC: ${mac}) eliminato. Scene aggiornate: ${sceneAggiornate}. Gateway confirmed: ${gatewayConfirmed}`);
 
     // Emit WebSocket per aggiornamento real-time
     emitDispositivoUpdate(dispositivo.impianto_id, { id: deviceId, ...dispositivo }, 'deleted');
 
+    releaseGatewayLock();
     res.json({
       success: true,
       message: 'Nodo rimosso con successo',
-      sceneAggiornate
+      sceneAggiornate,
+      gateway_confirmed: gatewayConfirmed
     });
   } catch (error) {
+    releaseGatewayLock();
     console.error('Errore unregisterNode:', error);
     res.status(500).json({ error: 'Errore durante la rimozione del nodo' });
   }

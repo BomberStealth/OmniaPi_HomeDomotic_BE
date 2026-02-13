@@ -188,6 +188,14 @@ export const getNodesCount = (): number => {
   return nodesState.size;
 };
 
+export const removeNode = (mac: string): boolean => {
+  const existed = nodesState.delete(mac);
+  if (existed) {
+    console.log(`📡 OmniaPi Node ${mac} removed from memory`);
+  }
+  return existed;
+};
+
 // ============================================
 // UTILITY
 // ============================================
@@ -245,4 +253,100 @@ export const getAllLedDevices = (): LedDevice[] => {
 export const removeLedDevice = (mac: string): void => {
   ledDevicesState.delete(mac);
   console.log(`📡 OmniaPi LED ${mac} removed`);
+};
+
+// ============================================
+// GATEWAY BUSY LOCK
+// ============================================
+
+export type GatewayOperation = 'scan' | 'commission' | 'ota_gateway' | 'ota_node' | 'delete';
+
+interface GatewayBusyState {
+  busy: boolean;
+  operation: GatewayOperation | null;
+  started_at: Date | null;
+  timeout: number; // ms
+}
+
+const BUSY_TIMEOUT = 120_000; // 2 minutes auto-unlock
+
+const gatewayBusy: GatewayBusyState = {
+  busy: false,
+  operation: null,
+  started_at: null,
+  timeout: BUSY_TIMEOUT,
+};
+
+let busyTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Acquire gateway lock. Returns true if acquired, false if already busy.
+ */
+export const acquireGatewayLock = (operation: GatewayOperation): boolean => {
+  // Auto-unlock if timed out
+  if (gatewayBusy.busy && gatewayBusy.started_at) {
+    const elapsed = Date.now() - gatewayBusy.started_at.getTime();
+    if (elapsed > gatewayBusy.timeout) {
+      console.warn(`⚠️ [BUSY-LOCK] Auto-unlock: ${gatewayBusy.operation} timed out after ${elapsed}ms`);
+      releaseGatewayLock();
+    }
+  }
+
+  if (gatewayBusy.busy) {
+    return false;
+  }
+
+  gatewayBusy.busy = true;
+  gatewayBusy.operation = operation;
+  gatewayBusy.started_at = new Date();
+
+  // Auto-unlock timer
+  if (busyTimer) clearTimeout(busyTimer);
+  busyTimer = setTimeout(() => {
+    if (gatewayBusy.busy) {
+      console.warn(`⚠️ [BUSY-LOCK] Auto-unlock timer fired for: ${gatewayBusy.operation}`);
+      releaseGatewayLock();
+    }
+  }, BUSY_TIMEOUT);
+
+  console.log(`🔒 [BUSY-LOCK] Acquired: ${operation}`);
+  return true;
+};
+
+/**
+ * Release gateway lock.
+ */
+export const releaseGatewayLock = (): void => {
+  const was = gatewayBusy.operation;
+  gatewayBusy.busy = false;
+  gatewayBusy.operation = null;
+  gatewayBusy.started_at = null;
+  if (busyTimer) {
+    clearTimeout(busyTimer);
+    busyTimer = null;
+  }
+  if (was) console.log(`🔓 [BUSY-LOCK] Released: ${was}`);
+};
+
+/**
+ * Get current busy state (for API response).
+ */
+export const getGatewayBusyState = (): {
+  busy: boolean;
+  operation: GatewayOperation | null;
+  started_at: string | null;
+} => {
+  // Check timeout before returning
+  if (gatewayBusy.busy && gatewayBusy.started_at) {
+    const elapsed = Date.now() - gatewayBusy.started_at.getTime();
+    if (elapsed > gatewayBusy.timeout) {
+      releaseGatewayLock();
+    }
+  }
+
+  return {
+    busy: gatewayBusy.busy,
+    operation: gatewayBusy.operation,
+    started_at: gatewayBusy.started_at?.toISOString() ?? null,
+  };
 };

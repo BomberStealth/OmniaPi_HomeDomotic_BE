@@ -6,6 +6,34 @@ import { JWTPayload } from '../types';
 import { socketManager } from './socketManager';
 import { WS_EVENTS } from './eventTypes';
 import { OmniapiNode, LedDevice } from '../services/omniapiState';
+import { query } from '../config/database';
+import { RowDataPacket } from 'mysql2';
+
+// ============================================
+// MAC → IMPIANTO CACHE
+// Avoids DB queries on every MQTT state update
+// ============================================
+const macToImpiantoCache = new Map<string, number | null>();
+
+export async function getImpiantoIdForMac(mac: string): Promise<number | null> {
+  const key = mac.toUpperCase();
+  if (macToImpiantoCache.has(key)) return macToImpiantoCache.get(key) || null;
+  try {
+    const rows = await query(
+      `SELECT impianto_id FROM dispositivi WHERE UPPER(mac_address) = ? LIMIT 1`,
+      [key]
+    ) as RowDataPacket[];
+    const id = rows.length > 0 ? rows[0].impianto_id : null;
+    macToImpiantoCache.set(key, id);
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+export function invalidateMacCache(mac: string) {
+  macToImpiantoCache.delete(mac.toUpperCase());
+}
 
 // ============================================
 // WEBSOCKET SERVER - Refactored with SocketManager
@@ -154,27 +182,39 @@ export const emitCondivisioneUpdate = (impiantoId: number, condivisione: any, ac
 };
 
 // ============================================
-// OMNIAPI EVENTS (Global broadcasts)
+// OMNIAPI EVENTS (Room-scoped when impiantoId known, broadcast as fallback)
 // ============================================
 
-export const emitOmniapiGatewayUpdate = (gateway: any) => {
-  socketManager.broadcast(WS_EVENTS.GATEWAY_UPDATED, gateway);
-  // Legacy events removed - now using only new WS_EVENTS system
+export const emitOmniapiGatewayUpdate = (gateway: any, impiantoId?: number | null) => {
+  if (impiantoId) {
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.GATEWAY_UPDATED, gateway);
+  } else {
+    socketManager.broadcast(WS_EVENTS.GATEWAY_UPDATED, gateway);
+  }
 };
 
-export const emitOmniapiNodeUpdate = (node: OmniapiNode) => {
-  socketManager.broadcast(WS_EVENTS.NODE_UPDATED, node);
-  // Legacy events removed - now using only new WS_EVENTS system
+export const emitOmniapiNodeUpdate = (node: OmniapiNode, impiantoId?: number | null) => {
+  if (impiantoId) {
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.NODE_UPDATED, node);
+  } else {
+    socketManager.broadcast(WS_EVENTS.NODE_UPDATED, node);
+  }
 };
 
-export const emitOmniapiNodesUpdate = (nodes: OmniapiNode[]) => {
-  socketManager.broadcast(WS_EVENTS.NODE_UPDATED, { nodes });
-  // Legacy events removed - now using only new WS_EVENTS system
+export const emitOmniapiNodesUpdate = (nodes: OmniapiNode[], impiantoId?: number | null) => {
+  if (impiantoId) {
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.NODE_UPDATED, nodes);
+  } else {
+    socketManager.broadcast(WS_EVENTS.NODE_UPDATED, nodes);
+  }
 };
 
-export const emitOmniapiLedUpdate = (ledState: LedDevice | any) => {
-  socketManager.broadcast(WS_EVENTS.LED_UPDATED, ledState);
-  // Legacy events removed - now using only new WS_EVENTS system
+export const emitOmniapiLedUpdate = (ledState: LedDevice | any, impiantoId?: number | null) => {
+  if (impiantoId) {
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.LED_UPDATED, ledState);
+  } else {
+    socketManager.broadcast(WS_EVENTS.LED_UPDATED, ledState);
+  }
 };
 
 // ============================================
