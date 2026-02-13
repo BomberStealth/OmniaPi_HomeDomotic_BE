@@ -5,6 +5,7 @@ import { RowDataPacket } from 'mysql2';
 import crypto from 'crypto';
 import { omniapiDeleteNode, getMQTTClient } from '../config/mqtt';
 import { removeNode, removeLedDevice } from '../services/omniapiState';
+import { logOperation } from '../services/operationLog';
 
 // ============================================
 // CONTROLLER IMPIANTI
@@ -416,12 +417,15 @@ export const deleteImpianto = async (req: Request, res: Response) => {
     // 5. Elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle)
     await query('DELETE FROM impianti WHERE id = ?', [id]);
 
+    logOperation(parseInt(id), 'delete_impianto', 'success', { nodes_decommissioned: nodeCount });
+
     res.json({
       success: true,
       message: 'Impianto eliminato con successo'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Errore delete impianto:', error);
+    logOperation(parseInt(req.params.id) || null, 'delete_impianto', 'error', { error: error.message });
     res.status(500).json({
       success: false,
       error: 'Errore durante l\'eliminazione dell\'impianto'

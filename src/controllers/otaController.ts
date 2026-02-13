@@ -8,6 +8,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { getGatewayState, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
 import { onlineGateways, getMQTTClient } from '../config/mqtt';
+import { logOperation } from '../services/operationLog';
 
 // ============================================
 // HELPER: Resolve gateway IP
@@ -147,6 +148,8 @@ export const uploadGatewayFirmware = async (req: AuthRequest, res: Response) => 
       await new Promise(r => setTimeout(r, 5000));
     }
 
+    logOperation(null, 'ota_gateway', 'success', { old_version: oldVersion, new_version: newVersion, firmware_size: firmwareSize });
+
     releaseGatewayLock();
     res.json({
       success: true,
@@ -158,6 +161,7 @@ export const uploadGatewayFirmware = async (req: AuthRequest, res: Response) => 
   } catch (error: any) {
     releaseGatewayLock();
     console.error('🔧 [OTA] Gateway upload error:', error.message);
+    logOperation(null, 'ota_gateway', 'error', { error: error.message });
     res.status(500).json({ error: error.message || 'Errore durante l\'aggiornamento firmware gateway' });
   }
 };
@@ -226,6 +230,8 @@ export const uploadNodeFirmware = async (req: AuthRequest, res: Response) => {
 
     console.log(`🔧 [OTA] Node ${mac} firmware accepted — OTA in progress`);
 
+    logOperation(null, 'ota_node', 'success', { mac, firmware_size: firmwareSize });
+
     releaseGatewayLock();
     res.json({
       success: true,
@@ -236,6 +242,7 @@ export const uploadNodeFirmware = async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     releaseGatewayLock();
     console.error('🔧 [OTA] Node upload error:', error.message);
+    logOperation(null, 'ota_node', 'error', { mac: req.params.mac, error: error.message });
     res.status(500).json({ error: error.message || 'Errore durante l\'aggiornamento firmware nodo' });
   }
 };

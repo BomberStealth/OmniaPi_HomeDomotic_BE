@@ -32,6 +32,7 @@ import {
   isRelayFirmwareId,
   getDeviceTypeFromFirmwareId
 } from './deviceTypes';
+import { logOperation } from '../services/operationLog';
 
 // ============================================
 // RECONCILIATION STATE
@@ -328,6 +329,7 @@ const reconcileGatewayNodes = async (gatewayMac: string, gatewayNodes: string[])
             const client = getMQTTClient();
             client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
             pendingOrphanCleanup = { pending: false, timestamp: 0 };
+            logOperation(null, 'factory_reset', 'success', { reason: 'orphan_cleanup', orphan_count: gatewayNodes.length, gateway_mac: gatewayMac });
           } else {
             console.log(`[RECONCILE] Deferred cleanup pending — only ${Math.round(elapsed / 1000)}s elapsed, waiting for full cycle`);
           }
@@ -389,8 +391,12 @@ const reconcileGatewayNodes = async (gatewayMac: string, gatewayNodes: string[])
 
     console.log(`[RECONCILE] Gateway sync complete: ${matched} matched, ${removed} removed, ${markedOffline} marked offline`);
     lastReconcileTime = Date.now();
-  } catch (error) {
+    if (removed > 0 || markedOffline > 0) {
+      logOperation(impiantoId, 'reconciliation', 'success', { matched, removed, marked_offline: markedOffline, gateway_mac: gatewayMac });
+    }
+  } catch (error: any) {
     console.error('[RECONCILE] Error during reconciliation:', error);
+    logOperation(null, 'reconciliation', 'error', { error: error.message, gateway_mac: gatewayMac });
   }
 };
 

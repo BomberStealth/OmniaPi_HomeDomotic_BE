@@ -4,6 +4,7 @@ import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState, r
 import { omniapiCommand, omniapiDeleteNode } from '../config/mqtt';
 import { query } from '../config/database';
 import { emitDispositivoUpdate, invalidateMacCache } from '../socket';
+import { logOperation } from '../services/operationLog';
 
 // ============================================
 // OMNIAPI CONTROLLER
@@ -463,6 +464,8 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
     // Emit WebSocket per aggiornamento real-time
     emitDispositivoUpdate(parseInt(impiantoId), nuovoDispositivo, 'created');
 
+    logOperation(parseInt(impiantoId), 'commission', 'success', { mac, nome, device_type: deviceType });
+
     res.status(201).json({
       success: true,
       message: isLed ? 'LED Strip registrato con successo' : 'Nodo registrato con successo',
@@ -470,6 +473,7 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
     });
   } catch (error: any) {
     console.error('Errore registerNode:', error);
+    logOperation(parseInt(req.params.impiantoId) || null, 'commission', 'error', { mac: req.body?.mac, error: error.message });
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'Dispositivo già registrato' });
     }
@@ -556,6 +560,10 @@ export const unregisterNode = async (req: AuthRequest, res: Response) => {
     // Emit WebSocket per aggiornamento real-time
     emitDispositivoUpdate(dispositivo.impianto_id, { id: deviceId, ...dispositivo }, 'deleted');
 
+    logOperation(dispositivo.impianto_id, 'delete_node', gatewayConfirmed ? 'success' : 'timeout', {
+      mac, nome: dispositivo.nome, device_id: deviceId, gateway_confirmed: gatewayConfirmed, scene_aggiornate: sceneAggiornate
+    });
+
     releaseGatewayLock();
     res.json({
       success: true,
@@ -563,9 +571,10 @@ export const unregisterNode = async (req: AuthRequest, res: Response) => {
       sceneAggiornate,
       gateway_confirmed: gatewayConfirmed
     });
-  } catch (error) {
+  } catch (error: any) {
     releaseGatewayLock();
     console.error('Errore unregisterNode:', error);
+    logOperation(null, 'delete_node', 'error', { device_id: req.params.id, error: error.message });
     res.status(500).json({ error: 'Errore durante la rimozione del nodo' });
   }
 };

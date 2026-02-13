@@ -150,6 +150,26 @@ export const runOmniapiMigration = async () => {
       console.log('⏭️ provision_tokens già presente');
     }
 
+    // 9. Crea tabella operation_log per logging operazioni critiche
+    if (!(await tableExists(connection, 'operation_log'))) {
+      await connection.query(`
+        CREATE TABLE operation_log (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          impianto_id INT,
+          tipo VARCHAR(50) NOT NULL,
+          risultato VARCHAR(20) NOT NULL,
+          dettagli JSON,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_impianto (impianto_id),
+          INDEX idx_tipo (tipo),
+          INDEX idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+      console.log('✅ Creata tabella operation_log');
+    } else {
+      console.log('⏭️ operation_log già presente');
+    }
+
     console.log('✅ Migrazione OmniaPi completata');
 
   } catch (error) {

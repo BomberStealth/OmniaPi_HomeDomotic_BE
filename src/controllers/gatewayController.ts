@@ -6,6 +6,7 @@ import { discoverDevices } from '../services/presenceService';
 import { onlineGateways, scanResults, clearScanResults, commissionResults } from '../config/mqtt';
 import { getMQTTClient } from '../config/mqtt';
 import { acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
+import { logOperation } from '../services/operationLog';
 
 // ============================================
 // GATEWAY CONTROLLER
@@ -812,10 +813,12 @@ export const startScan = async (req: AuthRequest, res: Response) => {
     client.publish('omniapi/gateway/scan', JSON.stringify({ action: 'start' }));
     releaseGatewayLock(); // Fire-and-forget: gateway gestisce la scan autonomamente
     console.log('🔍 Scan nodi avviato via MQTT');
+    logOperation(null, 'scan', 'success', { action: 'start' });
     res.json({ success: true, message: 'Scan avviato' });
-  } catch (error) {
+  } catch (error: any) {
     releaseGatewayLock();
     console.error('Errore startScan:', error);
+    logOperation(null, 'scan', 'error', { error: error.message });
     res.status(500).json({ error: 'Errore durante l\'avvio dello scan' });
   }
 };
@@ -889,13 +892,15 @@ export const commissionNode = async (req: AuthRequest, res: Response) => {
     const client = getMQTTClient();
     client.publish('omniapi/gateway/commission', JSON.stringify(payload));
     console.log(`🔧 Commissioning avviato per ${normalizedMac}`);
+    logOperation(null, 'commission', 'success', { mac: normalizedMac, name });
 
     // Commission is a short operation — release after sending
     releaseGatewayLock();
     res.json({ success: true, message: 'Commissioning avviato' });
-  } catch (error) {
+  } catch (error: any) {
     releaseGatewayLock();
     console.error('Errore commissionNode:', error);
+    logOperation(null, 'commission', 'error', { mac: req.body?.mac, error: error.message });
     res.status(500).json({ error: 'Errore durante il commissioning' });
   }
 };

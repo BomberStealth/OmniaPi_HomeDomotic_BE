@@ -382,6 +382,37 @@ export const enterImpiantoAsAdmin = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// GET /api/admin/operations
+// Log delle operazioni critiche (admin/installatore)
+export const getOperations = async (req: AuthRequest, res: Response) => {
+  try {
+    const { tipo, limit: limitStr, impianto_id } = req.query;
+    const limit = Math.min(parseInt(limitStr as string) || 100, 500);
+
+    let sql = 'SELECT * FROM operation_log WHERE 1=1';
+    const params: any[] = [];
+
+    if (tipo && typeof tipo === 'string') {
+      sql += ' AND tipo = ?';
+      params.push(tipo);
+    }
+    if (impianto_id && typeof impianto_id === 'string') {
+      sql += ' AND impianto_id = ?';
+      params.push(parseInt(impianto_id));
+    }
+
+    sql += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(limit);
+
+    const rows: any = await query(sql, params);
+
+    res.json({ success: true, operations: rows, count: rows.length });
+  } catch (error) {
+    console.error('Errore getOperations:', error);
+    res.status(500).json({ error: 'Errore durante il recupero delle operazioni' });
+  }
+};
+
 // POST /api/admin/exit-impianto
 // Elimina la condivisione temporanea admin
 export const exitImpiantoAsAdmin = async (req: AuthRequest, res: Response) => {

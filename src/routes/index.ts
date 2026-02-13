@@ -37,7 +37,7 @@ const router = Router();
 // VERSION ENDPOINT (per auto-update frontend)
 // ============================================
 router.get('/version', (req, res) => {
-  res.json({ version: 'v1.6.0' });
+  res.json({ version: 'v1.7.0' });
 });
 
 // ============================================
@@ -281,6 +281,9 @@ router.get('/admin/impianti/search', authMiddleware, roleMiddleware(UserRole.ADM
 // Admin mode - entra/esci da impianto con condivisione temporanea
 router.post('/admin/enter-impianto/:impiantoId', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.enterImpiantoAsAdmin);
 router.post('/admin/exit-impianto', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.exitImpiantoAsAdmin);
+
+// OPERATIONS LOG (Admin/Installatore)
+router.get('/admin/operations', authMiddleware, roleMiddleware(UserRole.INSTALLATORE, UserRole.ADMIN), adminController.getOperations);
 
 // OTA ROUTES (Admin only — firmware updates via gateway proxy)
 router.post('/admin/ota/gateway', authMiddleware, roleMiddleware(UserRole.ADMIN), raw({ type: 'application/octet-stream', limit: '10mb' }), otaController.uploadGatewayFirmware);
