@@ -37,7 +37,7 @@ const router = Router();
 // VERSION ENDPOINT (per auto-update frontend)
 // ============================================
 router.get('/version', (req, res) => {
-  res.json({ version: 'v1.7.0' });
+  res.json({ version: 'v1.8.0' });
 });
 
 // ============================================

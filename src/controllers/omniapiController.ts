@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
-import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState, removeNode, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
+import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState, removeNode, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState, addPendingCommand } from '../services/omniapiState';
 import { omniapiCommand, omniapiDeleteNode } from '../config/mqtt';
 import { query } from '../config/database';
-import { emitDispositivoUpdate, invalidateMacCache } from '../socket';
+import { emitDispositivoUpdate, invalidateMacCache, emitCommandTimeout } from '../socket';
 import { logOperation } from '../services/operationLog';
 
 // ============================================
@@ -702,6 +702,13 @@ export const controlRegisteredNode = async (req: AuthRequest, res: Response) => 
     const mqttStart = Date.now();
     omniapiCommand(mac, channel, action as 'on' | 'off' | 'toggle');
     console.log(`⏱️ [TIMING] MQTT publish: ${Date.now() - mqttStart}ms`);
+
+    // Register pending command with 5s timeout
+    const impiantoId = dispositivo.impianto_id;
+    addPendingCommand(mac, channel, action, impiantoId, (_key, cmd) => {
+      // Timeout: emit COMMAND_TIMEOUT to frontend
+      emitCommandTimeout(impiantoId, { mac: cmd.mac, channel: cmd.channel });
+    });
 
     const totalTime = Date.now() - startTime;
     console.log(`⏱️ [TIMING] controlRegisteredNode TOTAL: ${totalTime}ms`);

@@ -62,6 +62,8 @@ export const WS_EVENTS = {
   LED_UPDATED: 'LED_UPDATED',
   LED_STATE_CHANGED: 'LED_STATE_CHANGED',
 
+  COMMAND_TIMEOUT: 'COMMAND_TIMEOUT',
+
   // ============================================
   // NOTIFICATIONS
   // ============================================

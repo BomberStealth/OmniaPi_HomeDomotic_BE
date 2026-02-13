@@ -331,6 +331,102 @@ export const releaseGatewayLock = (): void => {
 /**
  * Get current busy state (for API response).
  */
+// ============================================
+// PENDING COMMANDS (relay command timeout tracking)
+// ============================================
+
+interface PendingCommand {
+  mac: string;
+  channel: number;
+  action: string;
+  impiantoId: number | null;
+  timestamp: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const pendingCommands = new Map<string, PendingCommand>();
+
+const COMMAND_TIMEOUT_MS = 5000;
+
+/** Normalize MAC to uppercase without colons/dashes for consistent matching */
+const normalizeMac = (mac: string): string =>
+  mac.toUpperCase().replace(/[:-]/g, '');
+
+/**
+ * Register a pending relay command. Returns the key for later resolution.
+ * @param onTimeout callback fired when the command times out
+ */
+export const addPendingCommand = (
+  mac: string,
+  channel: number,
+  action: string,
+  impiantoId: number | null,
+  onTimeout: (key: string, cmd: { mac: string; channel: number }) => void
+): string => {
+  const normalMac = normalizeMac(mac);
+  const key = `${normalMac}_${channel}`;
+
+  // Clear existing pending command for same key
+  const existing = pendingCommands.get(key);
+  if (existing) {
+    clearTimeout(existing.timer);
+    pendingCommands.delete(key);
+  }
+
+  const timer = setTimeout(() => {
+    const cmd = pendingCommands.get(key);
+    if (cmd) {
+      pendingCommands.delete(key);
+      console.log(`⏱️ [COMMAND-TIMEOUT] ${mac} ch${channel} timed out after ${COMMAND_TIMEOUT_MS}ms`);
+      onTimeout(key, { mac: cmd.mac, channel: cmd.channel });
+    }
+  }, COMMAND_TIMEOUT_MS);
+
+  pendingCommands.set(key, {
+    mac,
+    channel,
+    action,
+    impiantoId,
+    timestamp: Date.now(),
+    timer,
+  });
+
+  return key;
+};
+
+/**
+ * Resolve a pending command (relay state confirmed via MQTT).
+ * MAC is normalized for matching (MQTT sends AABBCCDDEEFF, DB stores AA:BB:CC:DD:EE:FF).
+ * Returns the resolved command or null if not found.
+ */
+export const resolvePendingCommand = (mac: string, channel?: number): PendingCommand | null => {
+  const normalMac = normalizeMac(mac);
+
+  if (channel !== undefined) {
+    const key = `${normalMac}_${channel}`;
+    const cmd = pendingCommands.get(key);
+    if (cmd) {
+      clearTimeout(cmd.timer);
+      pendingCommands.delete(key);
+      console.log(`✅ [COMMAND-RESOLVED] ${mac} ch${channel} confirmed in ${Date.now() - cmd.timestamp}ms`);
+      return cmd;
+    }
+  } else {
+    // Resolve all pending commands for this MAC
+    let resolved: PendingCommand | null = null;
+    for (const [key, cmd] of pendingCommands) {
+      if (normalizeMac(cmd.mac) === normalMac) {
+        clearTimeout(cmd.timer);
+        pendingCommands.delete(key);
+        console.log(`✅ [COMMAND-RESOLVED] ${mac} ch${cmd.channel} confirmed in ${Date.now() - cmd.timestamp}ms`);
+        resolved = cmd;
+      }
+    }
+    return resolved;
+  }
+  return null;
+};
+
 export const getGatewayBusyState = (): {
   busy: boolean;
   operation: GatewayOperation | null;

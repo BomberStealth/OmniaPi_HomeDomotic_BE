@@ -10,7 +10,8 @@ import {
   getAllNodes,
   updateLedState,
   getLedState,
-  getGatewayBusyState
+  getGatewayBusyState,
+  resolvePendingCommand
 } from '../services/omniapiState';
 import {
   emitOmniapiGatewayUpdate,
@@ -258,7 +259,7 @@ export const connectMQTT = () => {
       // OmniaPi Gateway topics
       'omniapi/gateway/status',       // Stato gateway
       'omniapi/gateway/nodes',        // Lista nodi
-      'omniapi/gateway/node/+/state', // Stato singolo nodo
+      'omniapi/gateway/nodes/+/state', // Stato singolo nodo (relay feedback)
       'omniapi/gateway/lwt',          // Last Will and Testament (offline)
       // OmniaPi Scan & Commission results
       'omniapi/gateway/scan/results',       // Scan results from gateway
@@ -762,9 +763,9 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       return;
     }
 
-    // omniapi/gateway/node/{mac}/state
-    // Topic format: omniapi/gateway/node/XX:XX:XX:XX:XX:XX/state
-    const nodeStateMatch = topic.match(/^omniapi\/gateway\/node\/([^/]+)\/state$/);
+    // omniapi/gateway/nodes/{mac}/state
+    // Topic format: omniapi/gateway/nodes/AABBCCDDEEFF/state
+    const nodeStateMatch = topic.match(/^omniapi\/gateway\/nodes\/([^/]+)\/state$/);
     if (nodeStateMatch) {
       const mac = nodeStateMatch[1];
       // Expected payload: { relay1: 0|1|"on"|"off", relay2: 0|1|"on"|"off", online?: boolean }
@@ -774,6 +775,10 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
       console.log(`📡 [DEBUG] Node state received: MAC=${mac}, raw={relay1:${data.relay1}, relay2:${data.relay2}}, parsed={relay1:${relay1}, relay2:${relay2}}`);
       console.log(`⏱️ [TIMING] Node state message processing started at +${Date.now() - messageStart}ms`);
+
+      // Resolve any pending relay commands for this MAC (confirm delivery)
+      // MAC from MQTT is AABBCCDDEEFF format, pending commands use original format
+      resolvePendingCommand(mac);
 
       const stateUpdateStart = Date.now();
       const { node: nodeUpdate, changed } = updateNodeState(mac, {

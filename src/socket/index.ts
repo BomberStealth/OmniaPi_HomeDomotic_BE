@@ -209,6 +209,14 @@ export const emitOmniapiNodesUpdate = (nodes: OmniapiNode[], impiantoId?: number
   }
 };
 
+export const emitCommandTimeout = (impiantoId: number | null, data: { mac: string; channel: number }) => {
+  if (impiantoId) {
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.COMMAND_TIMEOUT, data);
+  } else {
+    socketManager.broadcast(WS_EVENTS.COMMAND_TIMEOUT, data);
+  }
+};
+
 export const emitOmniapiLedUpdate = (ledState: LedDevice | any, impiantoId?: number | null) => {
   if (impiantoId) {
     socketManager.emitToImpianto(impiantoId, WS_EVENTS.LED_UPDATED, ledState);
