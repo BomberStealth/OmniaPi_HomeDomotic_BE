@@ -433,11 +433,16 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
           relay2: liveDevice.relay2
         };
 
-    // Inserisci nel DB
+    // Determina power_state dal dispositivo live
+    const powerState = isLed
+      ? (liveDevice.power ? 1 : 0)
+      : (liveDevice.relay1 ? 1 : 0);
+
+    // Inserisci nel DB con stato real-time
     const result: any = await query(
       `INSERT INTO dispositivi
-       (impianto_id, stanza_id, tipo, device_type, nome, mac_address, gateway_ip, stato, omniapi_info)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'online', ?)`,
+       (impianto_id, stanza_id, tipo, device_type, nome, mac_address, gateway_ip, stato, power_state, omniapi_info)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'online', ?, ?)`,
       [
         impiantoId,
         stanza_id || null,
@@ -446,6 +451,7 @@ export const registerNode = async (req: AuthRequest, res: Response) => {
         nome,
         mac,
         gatewayIp,
+        powerState,
         JSON.stringify(omniapiInfo)
       ]
     );

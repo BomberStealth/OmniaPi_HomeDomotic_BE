@@ -28,6 +28,16 @@ export type OmniapiNode = OmniapiNodeLegacy;
 export type LedDevice = LedDeviceLegacy;
 
 // ============================================
+// MAC NORMALIZATION
+// All MACs stored as "AA:BB:CC:DD:EE:FF" (uppercase, with colons)
+// ============================================
+
+export function normalizeMac(mac: string): string {
+  const clean = mac.toUpperCase().replace(/[:-]/g, '');
+  return clean.replace(/(.{2})/g, '$1:').slice(0, -1);
+}
+
+// ============================================
 // STATE STORAGE
 // ============================================
 
@@ -117,10 +127,11 @@ export const updateNodesFromList = (nodes: Array<{
   let anyChanged = false;
 
   nodes.forEach(node => {
-    const existing = nodesState.get(node.mac);
+    const mac = normalizeMac(node.mac);
+    const existing = nodesState.get(mac);
     const isOnline = node.online === true || (node.online as any) === 1;
     const next: OmniapiNode = {
-      mac: node.mac,
+      mac,
       online: isOnline,
       rssi: node.rssi ?? existing?.rssi ?? 0,
       version: node.version ?? existing?.version ?? '',
@@ -131,10 +142,10 @@ export const updateNodesFromList = (nodes: Array<{
 
     if (hasNodeChanged(existing, next)) {
       anyChanged = true;
-      console.log(`📡 Node ${node.mac} CHANGED: relay1=${next.relay1}, relay2=${next.relay2}, online=${next.online}`);
+      console.log(`📡 Node ${mac} CHANGED: relay1=${next.relay1}, relay2=${next.relay2}, online=${next.online}`);
     }
 
-    nodesState.set(node.mac, next);
+    nodesState.set(mac, next);
   });
 
   if (!anyChanged) {
@@ -150,14 +161,15 @@ export const updateNodeState = (mac: string, data: {
   relay1?: boolean;
   relay2?: boolean;
 }): { node: OmniapiNode | null; changed: boolean } => {
-  const existing = nodesState.get(mac);
+  const normalMac = normalizeMac(mac);
+  const existing = nodesState.get(normalMac);
   if (!existing && !data.online) {
     // Don't create new node from partial state update
     return { node: null, changed: false };
   }
 
   const next: OmniapiNode = {
-    mac,
+    mac: normalMac,
     online: data.online ?? existing?.online ?? false,
     rssi: data.rssi ?? existing?.rssi ?? 0,
     version: existing?.version ?? '',
@@ -167,17 +179,17 @@ export const updateNodeState = (mac: string, data: {
   };
 
   const changed = hasNodeChanged(existing, next);
-  nodesState.set(mac, next);
+  nodesState.set(normalMac, next);
 
   if (changed) {
-    console.log(`📡 OmniaPi Node ${mac} CHANGED:`, next);
+    console.log(`📡 OmniaPi Node ${normalMac} CHANGED:`, next);
   }
 
   return { node: next, changed };
 };
 
 export const getNode = (mac: string): OmniapiNode | undefined => {
-  return nodesState.get(mac);
+  return nodesState.get(normalizeMac(mac));
 };
 
 export const getAllNodes = (): OmniapiNode[] => {
@@ -189,9 +201,10 @@ export const getNodesCount = (): number => {
 };
 
 export const removeNode = (mac: string): boolean => {
-  const existed = nodesState.delete(mac);
+  const normalMac = normalizeMac(mac);
+  const existed = nodesState.delete(normalMac);
   if (existed) {
-    console.log(`📡 OmniaPi Node ${mac} removed from memory`);
+    console.log(`📡 OmniaPi Node ${normalMac} removed from memory`);
   }
   return existed;
 };
@@ -212,9 +225,10 @@ export const clearState = () => {
 // ============================================
 
 export const updateLedState = (mac: string, state: Partial<LedDevice>): { led: LedDevice; changed: boolean } => {
-  const existing = ledDevicesState.get(mac);
+  const normalMac = normalizeMac(mac);
+  const existing = ledDevicesState.get(normalMac);
   const defaults: LedDevice = {
-    mac,
+    mac: normalMac,
     power: false,
     r: 0,
     g: 255,
@@ -228,22 +242,22 @@ export const updateLedState = (mac: string, state: Partial<LedDevice>): { led: L
   const next: LedDevice = {
     ...(existing || defaults),
     ...state,
-    mac,
+    mac: normalMac,
     lastSeen: new Date()
   };
 
   const changed = hasLedChanged(existing, next);
-  ledDevicesState.set(mac, next);
+  ledDevicesState.set(normalMac, next);
 
   if (changed) {
-    console.log(`📡 OmniaPi LED ${mac} CHANGED:`, next);
+    console.log(`📡 OmniaPi LED ${normalMac} CHANGED:`, next);
   }
 
   return { led: next, changed };
 };
 
 export const getLedState = (mac: string): LedDevice | undefined => {
-  return ledDevicesState.get(mac);
+  return ledDevicesState.get(normalizeMac(mac));
 };
 
 export const getAllLedDevices = (): LedDevice[] => {
@@ -251,8 +265,9 @@ export const getAllLedDevices = (): LedDevice[] => {
 };
 
 export const removeLedDevice = (mac: string): void => {
-  ledDevicesState.delete(mac);
-  console.log(`📡 OmniaPi LED ${mac} removed`);
+  const normalMac = normalizeMac(mac);
+  ledDevicesState.delete(normalMac);
+  console.log(`📡 OmniaPi LED ${normalMac} removed`);
 };
 
 // ============================================
@@ -347,10 +362,6 @@ interface PendingCommand {
 const pendingCommands = new Map<string, PendingCommand>();
 
 const COMMAND_TIMEOUT_MS = 5000;
-
-/** Normalize MAC to uppercase without colons/dashes for consistent matching */
-const normalizeMac = (mac: string): string =>
-  mac.toUpperCase().replace(/[:-]/g, '');
 
 /**
  * Register a pending relay command. Returns the key for later resolution.

@@ -414,7 +414,12 @@ export const deleteImpianto = async (req: Request, res: Response) => {
       [id]
     );
 
-    // 5. Elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle)
+    // 5. Pulisci operation_log (nessuna FK, va pulito manualmente)
+    await query('DELETE FROM operation_log WHERE impianto_id = ?', [id]);
+
+    // 6. Elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle:
+    //    scene, piani, stanze, dispositivi, condivisioni_impianto, provision_tokens,
+    //    energy_tariffs, geofence_zones, tracked_devices, notifications_history, impianti_condivisi)
     await query('DELETE FROM impianti WHERE id = ?', [id]);
 
     logOperation(parseInt(id), 'delete_impianto', 'success', { nodes_decommissioned: nodeCount });

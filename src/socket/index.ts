@@ -5,18 +5,19 @@ import { jwtConfig } from '../config/jwt';
 import { JWTPayload } from '../types';
 import { socketManager } from './socketManager';
 import { WS_EVENTS } from './eventTypes';
-import { OmniapiNode, LedDevice } from '../services/omniapiState';
+import { OmniapiNode, LedDevice, normalizeMac } from '../services/omniapiState';
 import { query } from '../config/database';
 import { RowDataPacket } from 'mysql2';
 
 // ============================================
 // MAC → IMPIANTO CACHE
 // Avoids DB queries on every MQTT state update
+// Keys normalized to "AA:BB:CC:DD:EE:FF" format
 // ============================================
 const macToImpiantoCache = new Map<string, number | null>();
 
 export async function getImpiantoIdForMac(mac: string): Promise<number | null> {
-  const key = mac.toUpperCase();
+  const key = normalizeMac(mac);
   if (macToImpiantoCache.has(key)) return macToImpiantoCache.get(key) || null;
   try {
     const rows = await query(
@@ -32,7 +33,7 @@ export async function getImpiantoIdForMac(mac: string): Promise<number | null> {
 }
 
 export function invalidateMacCache(mac: string) {
-  macToImpiantoCache.delete(mac.toUpperCase());
+  macToImpiantoCache.delete(normalizeMac(mac));
 }
 
 // ============================================

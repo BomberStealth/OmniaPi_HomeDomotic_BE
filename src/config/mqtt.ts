@@ -11,7 +11,8 @@ import {
   updateLedState,
   getLedState,
   getGatewayBusyState,
-  resolvePendingCommand
+  resolvePendingCommand,
+  normalizeMac
 } from '../services/omniapiState';
 import {
   emitOmniapiGatewayUpdate,
@@ -359,8 +360,8 @@ const reconcileGatewayNodes = async (gatewayMac: string, gatewayNodes: string[])
       [impiantoId]
     ) as any[];
 
-    const dbMacs = new Set((dbRows || []).map((r: any) => r.mac_address?.toUpperCase().replace(/-/g, ':')));
-    const gwMacs = new Set(gatewayNodes.map((m: string) => m.toUpperCase().replace(/-/g, ':')));
+    const dbMacs = new Set((dbRows || []).map((r: any) => normalizeMac(r.mac_address || '')));
+    const gwMacs = new Set(gatewayNodes.map((m: string) => normalizeMac(m)));
 
     let matched = 0;
     let removed = 0;
@@ -558,23 +559,22 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
         if (gwImpiantoId) {
           const allNodes = data.nodes as any[];
           const currentOnlineMacs = new Set(
-            allNodes.filter((n: any) => n.online === true).map((n: any) => (n.mac as string).toUpperCase())
+            allNodes.filter((n: any) => n.online === true).map((n: any) => normalizeMac(n.mac))
           );
           const allCurrentMacs = new Set(
-            allNodes.map((n: any) => (n.mac as string).toUpperCase())
+            allNodes.map((n: any) => normalizeMac(n.mac))
           );
 
           // Check for nodes that went offline
           for (const [mac, wasOnline] of previousNodeOnlineState) {
             const isNowOnline = currentOnlineMacs.has(mac);
-            const isStillInList = allCurrentMacs.has(mac);
             if (wasOnline && !isNowOnline) {
               // Was online, now offline (or missing from list)
               console.log(`[NODE-STATUS] Node ${mac} went OFFLINE`);
               // Update DB stato
               query(
-                `UPDATE dispositivi SET stato = 'offline' WHERE UPPER(REPLACE(mac_address, ':', '')) = ? AND impianto_id = ?`,
-                [mac.replace(/[:-]/g, '').toUpperCase(), gwImpiantoId]
+                `UPDATE dispositivi SET stato = 'offline' WHERE UPPER(mac_address) = ? AND impianto_id = ?`,
+                [mac, gwImpiantoId]
               ).catch(err => console.error('[NODE-STATUS] DB update offline error:', err));
               // Notification
               query(
@@ -595,8 +595,8 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
               console.log(`[NODE-STATUS] Node ${mac} came ONLINE`);
               // Update DB stato
               query(
-                `UPDATE dispositivi SET stato = 'online' WHERE UPPER(REPLACE(mac_address, ':', '')) = ? AND impianto_id = ?`,
-                [mac.replace(/[:-]/g, '').toUpperCase(), gwImpiantoId]
+                `UPDATE dispositivi SET stato = 'online' WHERE UPPER(mac_address) = ? AND impianto_id = ?`,
+                [mac, gwImpiantoId]
               ).catch(err => console.error('[NODE-STATUS] DB update online error:', err));
               // Notification
               query(
@@ -617,8 +617,7 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
           // Update tracked state for next heartbeat
           for (const node of allNodes) {
-            const mac = (node.mac as string).toUpperCase();
-            previousNodeOnlineState.set(mac, node.online === true);
+            previousNodeOnlineState.set(normalizeMac(node.mac), node.online === true);
           }
         }
       }
@@ -781,7 +780,7 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
     // Topic format: omniapi/gateway/nodes/AABBCCDDEEFF/state
     const nodeStateMatch = topic.match(/^omniapi\/gateway\/nodes\/([^/]+)\/state$/);
     if (nodeStateMatch) {
-      const mac = nodeStateMatch[1];
+      const mac = normalizeMac(nodeStateMatch[1]);
       // Expected payload: { relay1: 0|1|"on"|"off", relay2: 0|1|"on"|"off", online?: boolean }
       const parseRelay = (val: any) => val === 1 || val === true || val === 'on' || val === 'ON';
       const relay1 = parseRelay(data.relay1);
@@ -844,6 +843,7 @@ const syncNodesToDatabase = async (nodes: any[]) => {
     // Aggiorna ogni nodo in base al suo stato online riportato dal gateway
     for (const node of nodes) {
       const isOnline = node.online === true || node.online === 1;
+      const normalMac = normalizeMac(node.mac);
       await query(
         `UPDATE dispositivi SET
           stato = ?,
@@ -864,7 +864,7 @@ const syncNodesToDatabase = async (nodes: any[]) => {
           node.relay1 ? true : false,
           node.relay2 ? true : false,
           isOnline,
-          node.mac
+          normalMac
         ]
       );
     }
@@ -884,6 +884,7 @@ const syncNodeStateToDatabase = async (mac: string, state: {
   online?: boolean;
 }) => {
   try {
+    const normalMac = normalizeMac(mac);
     await query(
       `UPDATE dispositivi SET
         stato = ?,
@@ -902,7 +903,7 @@ const syncNodeStateToDatabase = async (mac: string, state: {
         state.rssi || 0,
         state.relay1,
         state.relay2,
-        mac
+        normalMac
       ]
     );
   } catch (error) {

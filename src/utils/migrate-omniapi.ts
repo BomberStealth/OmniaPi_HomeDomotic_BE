@@ -195,6 +195,31 @@ export const runOmniapiMigration = async () => {
       console.log('⏭️ delete_account_token già presente');
     }
 
+    // 12. Aggiungi FK su operation_log con SET NULL (evita orfani futuri)
+    const [fkCheck]: any = await connection.query(`
+      SELECT CONSTRAINT_NAME FROM information_schema.REFERENTIAL_CONSTRAINTS
+      WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'operation_log' AND REFERENCED_TABLE_NAME = 'impianti'
+    `);
+    if (fkCheck.length === 0) {
+      try {
+        // Pulisci prima eventuali orfani esistenti
+        await connection.query(`
+          DELETE FROM operation_log WHERE impianto_id IS NOT NULL
+          AND impianto_id NOT IN (SELECT id FROM impianti)
+        `);
+        await connection.query(`
+          ALTER TABLE operation_log
+          ADD CONSTRAINT operation_log_ibfk_impianto
+          FOREIGN KEY (impianto_id) REFERENCES impianti(id) ON DELETE SET NULL
+        `);
+        console.log('✅ Aggiunta FK operation_log → impianti (ON DELETE SET NULL)');
+      } catch (e: any) {
+        console.log('⏭️ FK operation_log già presente o errore:', e.message);
+      }
+    } else {
+      console.log('⏭️ FK operation_log → impianti già presente');
+    }
+
     console.log('✅ Migrazione OmniaPi completata');
 
   } catch (error) {
