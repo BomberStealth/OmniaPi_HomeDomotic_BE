@@ -25,7 +25,7 @@ class SocketManager {
     const room = `impianto_${impiantoId}`;
     socket.join(room);
     const roomSize = this.getRoomSize(room);
-    console.log(`[WS] 📍 ${socket.data.email} joined ${room} (${roomSize} clients)`);
+    console.log(`[WS] 📍 ${socket.data.email} joined ${room} (${roomSize} clients) rooms=${JSON.stringify([...socket.rooms])}`);
   }
 
   leaveImpianto(socket: Socket, impiantoId: number) {

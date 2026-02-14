@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
-import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState, removeNode, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState, addPendingCommand } from '../services/omniapiState';
+import { getGatewayState, getAllNodes, getNode, getAllLedDevices, getLedState, removeNode, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState, addPendingCommand, updateNodeState } from '../services/omniapiState';
 import { omniapiCommand, omniapiDeleteNode } from '../config/mqtt';
 import { query } from '../config/database';
 import { emitDispositivoUpdate, invalidateMacCache, emitCommandTimeout } from '../socket';
@@ -706,7 +706,9 @@ export const controlRegisteredNode = async (req: AuthRequest, res: Response) => 
     // Register pending command with 5s timeout
     const impiantoId = dispositivo.impianto_id;
     addPendingCommand(mac, channel, action, impiantoId, (_key, cmd) => {
-      // Timeout: emit COMMAND_TIMEOUT to frontend
+      // Timeout: mark node as offline in memory so next heartbeat detects change
+      updateNodeState(cmd.mac, { online: false });
+      // Emit COMMAND_TIMEOUT to frontend
       emitCommandTimeout(impiantoId, { mac: cmd.mac, channel: cmd.channel });
     });
 

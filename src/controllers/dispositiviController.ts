@@ -46,18 +46,34 @@ export const getAllDispositivi = async (req: AuthRequest, res: Response) => {
       // Nodi relay OmniaPi
       if (d.device_type === 'omniapi_node' && d.mac_address) {
         const liveNode = getNode(d.mac_address);
+        const liveStato = liveNode ? (liveNode.online ? 'online' : 'offline') : d.stato;
+        // Update DB if stato differs for consistency on next reload
+        if (liveNode && liveStato !== d.stato) {
+          query(
+            `UPDATE dispositivi SET stato = ? WHERE id = ?`,
+            [liveStato, d.id]
+          ).catch(err => console.error('[ENRICH] DB update error:', err));
+        }
         return {
           ...d,
           mac: d.mac_address,
           online: liveNode?.online ?? false,
           relay1: liveNode?.relay1 ?? false,
           relay2: liveNode?.relay2 ?? false,
+          stato: liveStato,
         };
       }
       // LED Strip OmniaPi - arricchisci con stato real-time
       if (d.device_type === 'omniapi_led' && d.mac_address) {
         const liveLed = getLedState(d.mac_address);
         if (liveLed) {
+          const liveStato = liveLed.online !== false ? 'online' : 'offline';
+          if (liveStato !== d.stato) {
+            query(
+              `UPDATE dispositivi SET stato = ? WHERE id = ?`,
+              [liveStato, d.id]
+            ).catch(err => console.error('[ENRICH] DB update error:', err));
+          }
           return {
             ...d,
             mac: d.mac_address,
@@ -69,7 +85,7 @@ export const getAllDispositivi = async (req: AuthRequest, res: Response) => {
             led_b: liveLed.b ?? 255,
             led_brightness: liveLed.brightness ?? 255,
             led_effect: liveLed.effect ?? 0,
-            stato: liveLed.online !== false ? 'online' : 'offline',
+            stato: liveStato,
           };
         }
       }

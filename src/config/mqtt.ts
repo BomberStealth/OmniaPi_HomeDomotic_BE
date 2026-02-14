@@ -518,9 +518,12 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
         } catch { /* ignore */ }
       }
 
-      if (changed) {
-        emitOmniapiGatewayUpdate(gateway, gwImpiantoId);
-      }
+      // Always emit GATEWAY_UPDATED on heartbeat with nodes summary
+      // so frontend can clear unreachable/offline states even when gateway state is unchanged
+      const nodesForGateway = data.nodes && Array.isArray(data.nodes)
+        ? data.nodes.map((n: any) => ({ mac: n.mac, online: n.online === true }))
+        : undefined;
+      emitOmniapiGatewayUpdate({ ...gateway, nodes: nodesForGateway }, gwImpiantoId);
 
       // Parse nodes array from heartbeat (v1.7.7+)
       if (data.nodes && Array.isArray(data.nodes) && data.nodes.length > 0) {
@@ -568,7 +571,12 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
             if (wasOnline && !isNowOnline) {
               // Was online, now offline (or missing from list)
               console.log(`[NODE-STATUS] Node ${mac} went OFFLINE`);
-              // Look up node name
+              // Update DB stato
+              query(
+                `UPDATE dispositivi SET stato = 'offline' WHERE UPPER(REPLACE(mac_address, ':', '')) = ? AND impianto_id = ?`,
+                [mac.replace(/[:-]/g, '').toUpperCase(), gwImpiantoId]
+              ).catch(err => console.error('[NODE-STATUS] DB update offline error:', err));
+              // Notification
               query(
                 `SELECT nome FROM dispositivi WHERE UPPER(mac_address) = ? AND impianto_id = ? LIMIT 1`,
                 [mac, gwImpiantoId]
@@ -585,6 +593,12 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
             } else if (!wasOnline && isNowOnline) {
               // Was offline, now online
               console.log(`[NODE-STATUS] Node ${mac} came ONLINE`);
+              // Update DB stato
+              query(
+                `UPDATE dispositivi SET stato = 'online' WHERE UPPER(REPLACE(mac_address, ':', '')) = ? AND impianto_id = ?`,
+                [mac.replace(/[:-]/g, '').toUpperCase(), gwImpiantoId]
+              ).catch(err => console.error('[NODE-STATUS] DB update online error:', err));
+              // Notification
               query(
                 `SELECT nome FROM dispositivi WHERE UPPER(mac_address) = ? AND impianto_id = ? LIMIT 1`,
                 [mac, gwImpiantoId]
