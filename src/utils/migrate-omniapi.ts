@@ -170,6 +170,31 @@ export const runOmniapiMigration = async () => {
       console.log('⏭️ operation_log già presente');
     }
 
+    // 10. Colonne per conferma cambio password via email
+    if (!(await columnExists(connection, 'utenti', 'password_change_token'))) {
+      await connection.query(`
+        ALTER TABLE utenti
+        ADD COLUMN password_change_token VARCHAR(255) NULL,
+        ADD COLUMN password_change_expires TIMESTAMP NULL,
+        ADD COLUMN new_password_hash VARCHAR(255) NULL
+      `);
+      console.log('✅ Aggiunte colonne password_change_token/expires/new_password_hash');
+    } else {
+      console.log('⏭️ password_change_token già presente');
+    }
+
+    // 11. Colonne per conferma eliminazione account via email
+    if (!(await columnExists(connection, 'utenti', 'delete_account_token'))) {
+      await connection.query(`
+        ALTER TABLE utenti
+        ADD COLUMN delete_account_token VARCHAR(255) NULL,
+        ADD COLUMN delete_account_expires TIMESTAMP NULL
+      `);
+      console.log('✅ Aggiunte colonne delete_account_token/expires');
+    } else {
+      console.log('⏭️ delete_account_token già presente');
+    }
+
     console.log('✅ Migrazione OmniaPi completata');
 
   } catch (error) {

@@ -37,7 +37,7 @@ const router = Router();
 // VERSION ENDPOINT (per auto-update frontend)
 // ============================================
 router.get('/version', (req, res) => {
-  res.json({ version: 'v1.8.0' });
+  res.json({ version: 'v1.8.1' });
 });
 
 // ============================================
@@ -54,6 +54,9 @@ router.post('/auth/logout', authMiddleware, authController.logout);
 router.get('/auth/verify-email', authController.verifyEmail);
 // Reinvia email verifica (pubblico)
 router.post('/auth/resend-verification', authController.resendVerification);
+// Conferma cambio password e eliminazione account (pubblico - link da email)
+router.get('/auth/confirm-change-password', authController.confirmChangePassword);
+router.get('/auth/confirm-delete-account', authController.confirmDeleteAccount);
 // Reset password (pubblico)
 router.post('/auth/forgot-password', authController.forgotPassword);
 router.post('/auth/reset-password', authController.resetPassword);

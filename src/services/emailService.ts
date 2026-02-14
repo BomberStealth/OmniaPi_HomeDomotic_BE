@@ -260,6 +260,208 @@ export const sendResetPasswordEmail = async (
 };
 
 // ============================================
+// TEMPLATE EMAIL - CONFERMA CAMBIO PASSWORD
+// ============================================
+const getPasswordChangeConfirmHTML = (nome: string, confirmLink: string): string => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conferma Cambio Password - OmniaPi</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0a0a09;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0a0a09; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width: 500px; background: linear-gradient(145deg, rgba(20, 18, 15, 0.95), rgba(15, 14, 12, 0.98)); border-radius: 24px; border: 1px solid rgba(106, 212, 160, 0.2); box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);">
+          <tr>
+            <td style="padding: 40px 40px 20px; text-align: center;">
+              <div style="width: 60px; height: 60px; margin: 0 auto 20px; background: linear-gradient(145deg, rgba(245, 158, 11, 0.3), rgba(245, 158, 11, 0.1)); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 32px;">🔑</span>
+              </div>
+              <h1 style="margin: 0; color: #6ad4a0; font-size: 28px; font-weight: 700;">OmniaPi</h1>
+              <p style="margin: 8px 0 0; color: rgba(255, 255, 255, 0.5); font-size: 14px;">Conferma Cambio Password</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 40px;">
+              <h2 style="margin: 0 0 16px; color: #ffffff; font-size: 20px; font-weight: 600;">Ciao ${nome}!</h2>
+              <p style="margin: 0 0 24px; color: rgba(255, 255, 255, 0.7); font-size: 15px; line-height: 1.6;">
+                Hai richiesto il cambio della password del tuo account. Clicca il pulsante qui sotto per confermare la modifica.
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding: 8px 0 24px;">
+                    <a href="${confirmLink}" style="display: inline-block; padding: 16px 32px; background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #0a0a09; font-size: 16px; font-weight: 600; text-decoration: none; border-radius: 12px; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);">
+                      Conferma Cambio Password
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 0 0 16px; color: rgba(255, 255, 255, 0.5); font-size: 13px; line-height: 1.5;">
+                Se il pulsante non funziona, copia e incolla questo link nel tuo browser:
+              </p>
+              <p style="margin: 0 0 24px; padding: 12px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; word-break: break-all;">
+                <a href="${confirmLink}" style="color: #f59e0b; font-size: 12px; text-decoration: none;">${confirmLink}</a>
+              </p>
+              <p style="margin: 0; color: rgba(255, 255, 255, 0.4); font-size: 12px;">
+                ⏰ Questo link scade tra 1 ora.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 40px 20px;">
+              <div style="padding: 16px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 12px;">
+                <p style="margin: 0; color: #f59e0b; font-size: 13px;">
+                  ⚠️ <strong>Nota di sicurezza:</strong> Se non hai richiesto il cambio password, ignora questa email. La tua password rimarrà invariata.
+                </p>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 40px 40px; border-top: 1px solid rgba(106, 212, 160, 0.1);">
+              <p style="margin: 0; color: rgba(255, 255, 255, 0.3); font-size: 11px; text-align: center;">
+                © 2026 OmniaPi - Home Domotica
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
+// ============================================
+// TEMPLATE EMAIL - CONFERMA ELIMINAZIONE ACCOUNT
+// ============================================
+const getDeleteAccountConfirmHTML = (nome: string, confirmLink: string): string => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conferma Eliminazione Account - OmniaPi</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0a0a09;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #0a0a09; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width: 500px; background: linear-gradient(145deg, rgba(20, 18, 15, 0.95), rgba(15, 14, 12, 0.98)); border-radius: 24px; border: 1px solid rgba(239, 68, 68, 0.2); box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);">
+          <tr>
+            <td style="padding: 40px 40px 20px; text-align: center;">
+              <div style="width: 60px; height: 60px; margin: 0 auto 20px; background: linear-gradient(145deg, rgba(239, 68, 68, 0.3), rgba(239, 68, 68, 0.1)); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 32px;">🗑️</span>
+              </div>
+              <h1 style="margin: 0; color: #6ad4a0; font-size: 28px; font-weight: 700;">OmniaPi</h1>
+              <p style="margin: 8px 0 0; color: rgba(255, 255, 255, 0.5); font-size: 14px;">Eliminazione Account</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 40px;">
+              <h2 style="margin: 0 0 16px; color: #ffffff; font-size: 20px; font-weight: 600;">Ciao ${nome},</h2>
+              <p style="margin: 0 0 24px; color: rgba(255, 255, 255, 0.7); font-size: 15px; line-height: 1.6;">
+                Hai richiesto l'eliminazione del tuo account OmniaPi. Questa azione è <strong style="color: #ef4444;">irreversibile</strong>: tutti i tuoi dati, impianti, dispositivi e scene verranno eliminati definitivamente.
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding: 8px 0 24px;">
+                    <a href="${confirmLink}" style="display: inline-block; padding: 16px 32px; background: linear-gradient(135deg, #fca5a5, #ef4444); color: #ffffff; font-size: 16px; font-weight: 600; text-decoration: none; border-radius: 12px; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
+                      Conferma Eliminazione Account
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 0 0 16px; color: rgba(255, 255, 255, 0.5); font-size: 13px; line-height: 1.5;">
+                Se il pulsante non funziona, copia e incolla questo link nel tuo browser:
+              </p>
+              <p style="margin: 0 0 24px; padding: 12px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; word-break: break-all;">
+                <a href="${confirmLink}" style="color: #ef4444; font-size: 12px; text-decoration: none;">${confirmLink}</a>
+              </p>
+              <p style="margin: 0; color: rgba(255, 255, 255, 0.4); font-size: 12px;">
+                ⏰ Questo link scade tra 1 ora.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 40px 20px;">
+              <div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 12px;">
+                <p style="margin: 0; color: #ef4444; font-size: 13px;">
+                  ⚠️ <strong>Attenzione:</strong> Se non hai richiesto l'eliminazione del tuo account, ignora questa email e la tua password rimane sicura. Ti consigliamo di cambiarla per precauzione.
+                </p>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 40px 40px; border-top: 1px solid rgba(106, 212, 160, 0.1);">
+              <p style="margin: 0; color: rgba(255, 255, 255, 0.3); font-size: 11px; text-align: center;">
+                © 2026 OmniaPi - Home Domotica
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
+// ============================================
+// INVIA EMAIL CONFERMA CAMBIO PASSWORD
+// ============================================
+export const sendPasswordChangeConfirmation = async (
+  email: string,
+  nome: string,
+  token: string
+): Promise<boolean> => {
+  const confirmLink = `${FRONTEND_URL}/confirm-change-password?token=${token}`;
+
+  try {
+    await transporter.sendMail({
+      from: `"OmniaPi Home" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: '🔑 Conferma Cambio Password - OmniaPi',
+      html: getPasswordChangeConfirmHTML(nome, confirmLink),
+    });
+
+    console.log(`📧 Email conferma cambio password inviata a: ${email}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Errore invio email conferma cambio password a ${email}:`, error);
+    return false;
+  }
+};
+
+// ============================================
+// INVIA EMAIL CONFERMA ELIMINAZIONE ACCOUNT
+// ============================================
+export const sendDeleteAccountConfirmation = async (
+  email: string,
+  nome: string,
+  token: string
+): Promise<boolean> => {
+  const confirmLink = `${FRONTEND_URL}/confirm-delete-account?token=${token}`;
+
+  try {
+    await transporter.sendMail({
+      from: `"OmniaPi Home" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: '🗑️ Conferma Eliminazione Account - OmniaPi',
+      html: getDeleteAccountConfirmHTML(nome, confirmLink),
+    });
+
+    console.log(`📧 Email conferma eliminazione account inviata a: ${email}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Errore invio email conferma eliminazione a ${email}:`, error);
+    return false;
+  }
+};
+
+// ============================================
 // INVIA EMAIL INVITO IMPIANTO
 // ============================================
 export const sendInviteEmail = async (
@@ -335,4 +537,6 @@ export default {
   sendVerificationEmail,
   sendResetPasswordEmail,
   sendInviteEmail,
+  sendPasswordChangeConfirmation,
+  sendDeleteAccountConfirmation,
 };

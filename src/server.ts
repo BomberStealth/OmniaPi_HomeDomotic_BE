@@ -10,6 +10,7 @@ import { startNodeHealthCheck } from './services/nodeHealthCheck';
 import { runOmniapiMigration } from './utils/migrate-omniapi';
 import { initSessionsTable, cleanupExpiredSessions } from './controllers/sessionsController';
 import logger from './config/logger';
+import { verifyEmailConfig } from './services/emailService';
 
 dotenv.config();
 
@@ -50,6 +51,9 @@ const startServer = async () => {
 
     // Avvia node health check (rileva nodi offline)
     startNodeHealthCheck();
+
+    // Verifica configurazione SMTP (non blocca l'avvio)
+    verifyEmailConfig();
 
     // Crea HTTP server
     const httpServer = http.createServer(app);

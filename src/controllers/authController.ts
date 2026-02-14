@@ -21,7 +21,9 @@ import { passwordPolicy } from '../config/security';
 import {
   generateToken,
   sendVerificationEmail,
-  sendResetPasswordEmail
+  sendResetPasswordEmail,
+  sendPasswordChangeConfirmation,
+  sendDeleteAccountConfirmation
 } from '../services/emailService';
 import { createSession, deleteSessionByToken } from './sessionsController';
 
@@ -380,7 +382,7 @@ export const getProfile = async (req: Request, res: Response) => {
   }
 };
 
-// Cambia password
+// Cambia password (Step 1: verifica + invia email conferma)
 export const changePassword = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
@@ -437,34 +439,123 @@ export const changePassword = async (req: Request, res: Response) => {
       });
     }
 
-    // Hash e aggiorna + incrementa token_version per invalidare tutte le sessioni
-    const hashedPassword = await bcrypt.hash(newPassword, 12);
-    const newTokenVersion = (user.token_version || 0) + 1;
+    // Hash nuova password e salva temporaneamente + genera token conferma
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
+    const confirmToken = generateToken();
+    const tokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 ora
+
     await query(
-      'UPDATE utenti SET password = ?, token_version = ? WHERE id = ?',
-      [hashedPassword, newTokenVersion, userId]
+      `UPDATE utenti SET
+       password_change_token = ?, password_change_expires = ?, new_password_hash = ?
+       WHERE id = ?`,
+      [confirmToken, tokenExpires, newPasswordHash, userId]
     );
+
+    // Invia email di conferma
+    const emailSent = await sendPasswordChangeConfirmation(user.email, user.nome, confirmToken);
 
     await logAudit({
       userId,
       action: AuditAction.PASSWORD_CHANGE,
       severity: AuditSeverity.INFO,
-      details: { email: user.email, sessionsInvalidated: true },
+      details: { email: user.email, step: 'confirmation_sent', emailSent },
       success: true,
     }, req);
 
-    console.log(`🔐 Password cambiata per ${user.email} - Tutte le sessioni invalidate (token_version: ${newTokenVersion})`);
+    console.log(`🔐 Richiesta cambio password per ${user.email} - Email conferma ${emailSent ? 'inviata' : 'FALLITA'}`);
 
     res.json({
       success: true,
-      message: 'Password aggiornata con successo. Tutte le altre sessioni sono state disconnesse.',
-      sessionsInvalidated: true
+      message: 'Email di conferma inviata. Controlla la tua casella di posta per confermare il cambio password.',
+      requiresConfirmation: true
     });
   } catch (error) {
     console.error('Errore cambio password:', error);
     res.status(500).json({
       success: false,
       error: 'Errore durante il cambio password'
+    });
+  }
+};
+
+// Conferma cambio password (Step 2: click dal link email)
+export const confirmChangePassword = async (req: Request, res: Response) => {
+  try {
+    const { token } = req.query;
+
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Token non valido'
+      });
+    }
+
+    // Trova utente con token
+    const users = await query(
+      `SELECT id, email, nome, password_change_expires, new_password_hash, token_version
+       FROM utenti
+       WHERE password_change_token = ?`,
+      [token]
+    ) as RowDataPacket[];
+
+    if (users.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Token non valido o già utilizzato'
+      });
+    }
+
+    const user = users[0];
+
+    // Verifica scadenza
+    if (user.password_change_expires && new Date(user.password_change_expires) < new Date()) {
+      // Pulisci token scaduto
+      await query(
+        `UPDATE utenti SET password_change_token = NULL, password_change_expires = NULL, new_password_hash = NULL WHERE id = ?`,
+        [user.id]
+      );
+      return res.status(400).json({
+        success: false,
+        error: 'Token scaduto. Richiedi un nuovo cambio password.'
+      });
+    }
+
+    if (!user.new_password_hash) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nessuna nuova password trovata. Richiedi un nuovo cambio password.'
+      });
+    }
+
+    // Aggiorna password + incrementa token_version + pulisci token
+    const newTokenVersion = (user.token_version || 0) + 1;
+    await query(
+      `UPDATE utenti SET
+       password = ?, token_version = ?,
+       password_change_token = NULL, password_change_expires = NULL, new_password_hash = NULL
+       WHERE id = ?`,
+      [user.new_password_hash, newTokenVersion, user.id]
+    );
+
+    await logAudit({
+      userId: user.id,
+      action: AuditAction.PASSWORD_CHANGE,
+      severity: AuditSeverity.INFO,
+      details: { email: user.email, step: 'confirmed_via_email', sessionsInvalidated: true },
+      success: true,
+    }, req);
+
+    console.log(`✅ Password cambiata confermata per ${user.email} - Sessioni invalidate (token_version: ${newTokenVersion})`);
+
+    res.json({
+      success: true,
+      message: 'Password aggiornata con successo! Tutte le sessioni sono state disconnesse. Effettua il login con la nuova password.'
+    });
+  } catch (error) {
+    console.error('❌ Errore conferma cambio password:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Errore durante la conferma del cambio password'
     });
   }
 };
@@ -864,7 +955,7 @@ export const updateProfile = async (req: Request, res: Response) => {
 };
 
 // ============================================
-// ELIMINA ACCOUNT (GDPR - Diritto alla cancellazione)
+// ELIMINA ACCOUNT (Step 1: verifica + invia email conferma)
 // ============================================
 export const deleteAccount = async (req: Request, res: Response) => {
   try {
@@ -902,97 +993,126 @@ export const deleteAccount = async (req: Request, res: Response) => {
       });
     }
 
+    // Genera token conferma eliminazione
+    const deleteToken = generateToken();
+    const tokenExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 ora
+
+    await query(
+      `UPDATE utenti SET delete_account_token = ?, delete_account_expires = ? WHERE id = ?`,
+      [deleteToken, tokenExpires, userId]
+    );
+
+    // Invia email di conferma
+    const emailSent = await sendDeleteAccountConfirmation(user.email, user.nome, deleteToken);
+
+    await logAudit({
+      userId,
+      action: AuditAction.ACCOUNT_DELETED || 'ACCOUNT_DELETED',
+      severity: AuditSeverity.WARNING,
+      details: { email: user.email, step: 'confirmation_sent', emailSent },
+      success: true,
+    }, req);
+
+    console.log(`🗑️ Richiesta eliminazione account per ${user.email} - Email conferma ${emailSent ? 'inviata' : 'FALLITA'}`);
+
+    res.json({
+      success: true,
+      message: 'Email di conferma inviata. Hai 1 ora per confermare l\'eliminazione del tuo account.',
+      requiresConfirmation: true
+    });
+  } catch (error) {
+    console.error('❌ Errore eliminazione account:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Errore durante l\'eliminazione dell\'account'
+    });
+  }
+};
+
+// ============================================
+// CONFERMA ELIMINAZIONE ACCOUNT (Step 2: click dal link email)
+// ============================================
+export const confirmDeleteAccount = async (req: Request, res: Response) => {
+  try {
+    const { token } = req.query;
+
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Token non valido'
+      });
+    }
+
+    // Trova utente con token
+    const users = await query(
+      `SELECT id, email, nome, delete_account_expires
+       FROM utenti
+       WHERE delete_account_token = ?`,
+      [token]
+    ) as RowDataPacket[];
+
+    if (users.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Token non valido o già utilizzato'
+      });
+    }
+
+    const user = users[0];
+    const userId = user.id;
+
+    // Verifica scadenza
+    if (user.delete_account_expires && new Date(user.delete_account_expires) < new Date()) {
+      await query(
+        `UPDATE utenti SET delete_account_token = NULL, delete_account_expires = NULL WHERE id = ?`,
+        [userId]
+      );
+      return res.status(400).json({
+        success: false,
+        error: 'Token scaduto. Richiedi nuovamente l\'eliminazione dell\'account.'
+      });
+    }
+
     // Log prima della cancellazione
     await logAudit({
       userId,
       action: AuditAction.ACCOUNT_DELETED || 'ACCOUNT_DELETED',
       severity: AuditSeverity.WARNING,
-      details: { email: user.email },
+      details: { email: user.email, step: 'confirmed_via_email' },
       success: true,
     }, req);
 
     // Cancella in ordine per rispettare FK constraints
-    // 1. Push tokens (se la tabella esiste)
-    try {
-      await query('DELETE FROM push_tokens WHERE user_id = ?', [userId]);
-    } catch (e: any) {
-      // Ignora se la tabella non esiste
-      if (!e.message?.includes("doesn't exist")) throw e;
-    }
+    try { await query('DELETE FROM push_tokens WHERE user_id = ?', [userId]); } catch (e: any) { if (!e.message?.includes("doesn't exist")) throw e; }
+    try { await query('DELETE FROM notification_history WHERE user_id = ?', [userId]); } catch (e: any) { if (!e.message?.includes("doesn't exist")) throw e; }
+    try { await query('DELETE FROM geofence_history WHERE user_id = ?', [userId]); } catch (e: any) { if (!e.message?.includes("doesn't exist")) throw e; }
+    try { await query('DELETE FROM login_attempts WHERE email = ?', [user.email]); } catch (e: any) { if (!e.message?.includes("doesn't exist")) throw e; }
+    try { await query('DELETE FROM condivisioni_impianto WHERE utente_id = ?', [userId]); } catch (e: any) { if (!e.message?.includes("doesn't exist")) throw e; }
 
-    // 2. Notification history (se la tabella esiste)
-    try {
-      await query('DELETE FROM notification_history WHERE user_id = ?', [userId]);
-    } catch (e: any) {
-      if (!e.message?.includes("doesn't exist")) throw e;
-    }
-
-    // 3. Geofence history (se la tabella esiste)
-    try {
-      await query('DELETE FROM geofence_history WHERE user_id = ?', [userId]);
-    } catch (e: any) {
-      if (!e.message?.includes("doesn't exist")) throw e;
-    }
-
-    // 4. Login attempts (se la tabella esiste)
-    try {
-      await query('DELETE FROM login_attempts WHERE email = ?', [user.email]);
-    } catch (e: any) {
-      if (!e.message?.includes("doesn't exist")) throw e;
-    }
-
-    // 5. Audit log (opzionale - potremmo volerlo mantenere)
-    // await query('DELETE FROM audit_log WHERE user_id = ?', [userId]);
-
-    // 6. Condivisioni impianti (se la tabella esiste)
-    try {
-      await query('DELETE FROM condivisioni_impianto WHERE utente_id = ?', [userId]);
-    } catch (e: any) {
-      if (!e.message?.includes("doesn't exist")) throw e;
-    }
-
-    // 7. Impianti di proprietà (cascade su scene, dispositivi, stanze, etc)
-    const impianti = await query(
-      'SELECT id FROM impianti WHERE utente_id = ?',
-      [userId]
-    ) as RowDataPacket[];
-
+    // Impianti di proprietà
+    const impianti = await query('SELECT id FROM impianti WHERE utente_id = ?', [userId]) as RowDataPacket[];
     for (const impianto of impianti) {
-      // Scene actions
-      await query(
-        `DELETE sa FROM scene_actions sa
-         INNER JOIN scene s ON sa.scena_id = s.id
-         WHERE s.impianto_id = ?`,
-        [impianto.id]
-      );
-      // Scene
+      await query(`DELETE sa FROM scene_actions sa INNER JOIN scene s ON sa.scena_id = s.id WHERE s.impianto_id = ?`, [impianto.id]);
       await query('DELETE FROM scene WHERE impianto_id = ?', [impianto.id]);
-      // Dispositivi
       await query('DELETE FROM dispositivi WHERE stanza_id IN (SELECT id FROM stanze WHERE impianto_id = ?)', [impianto.id]);
       await query('DELETE FROM dispositivi_tasmota WHERE impianto_id = ?', [impianto.id]);
       await query('DELETE FROM omniapi_nodes WHERE impianto_id = ?', [impianto.id]);
-      // Stanze
       await query('DELETE FROM stanze WHERE impianto_id = ?', [impianto.id]);
-      // Geofence zones
       await query('DELETE FROM geofence_zones WHERE impianto_id = ?', [impianto.id]);
-      // Gateway
       await query('UPDATE gateways SET impianto_id = NULL, stato = "pending" WHERE impianto_id = ?', [impianto.id]);
     }
 
-    // 8. Impianti
     await query('DELETE FROM impianti WHERE utente_id = ?', [userId]);
-
-    // 9. Utente
     await query('DELETE FROM utenti WHERE id = ?', [userId]);
 
-    console.log(`🗑️ Account eliminato: ${user.email}`);
+    console.log(`🗑️ Account eliminato confermato: ${user.email}`);
 
     res.json({
       success: true,
       message: 'Account eliminato con successo. Tutti i tuoi dati sono stati rimossi.'
     });
   } catch (error) {
-    console.error('❌ Errore eliminazione account:', error);
+    console.error('❌ Errore conferma eliminazione account:', error);
     res.status(500).json({
       success: false,
       error: 'Errore durante l\'eliminazione dell\'account'
