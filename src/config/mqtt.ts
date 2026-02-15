@@ -527,28 +527,36 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       emitOmniapiGatewayUpdate({ ...gateway, nodes: nodesForGateway }, gwImpiantoId);
 
       // Parse nodes array from heartbeat (v1.7.7+)
+      // NOTE: heartbeat nodes may NOT have a 'type' field — classify via
+      // in-memory state (known LED → ledDevicesState, else → relay default)
       if (data.nodes && Array.isArray(data.nodes) && data.nodes.length > 0) {
-        // Map firmware format {mac,type,fw,commissioned,rssi,online} to state format
-        const relayNodes = data.nodes
-          .filter((n: any) => isRelayFirmwareId(n.type))
-          .map((n: any) => ({
-            mac: n.mac,
-            online: n.online === true,
-            rssi: n.rssi ?? 0,
-            version: n.fw ?? '',
-          }));
+        const relayUpdates: Array<{ mac: string; online: boolean; rssi: number; version: string }> = [];
+        const ledUpdates: any[] = [];
 
-        const ledNodes = data.nodes.filter((n: any) => isLedFirmwareId(n.type));
+        for (const n of data.nodes) {
+          const mac = normalizeMac(n.mac);
+          // If 'type' field is present, use it; otherwise classify by in-memory state
+          if (n.type !== undefined ? isLedFirmwareId(n.type) : !!getLedState(mac)) {
+            ledUpdates.push(n);
+          } else {
+            relayUpdates.push({
+              mac: n.mac,
+              online: n.online === true,
+              rssi: n.rssi ?? 0,
+              version: n.fw ?? '',
+            });
+          }
+        }
 
-        if (relayNodes.length > 0) {
-          const { nodes: updatedNodes, changed: nodesChanged } = updateNodesFromList(relayNodes);
+        if (relayUpdates.length > 0) {
+          const { nodes: updatedNodes, changed: nodesChanged } = updateNodesFromList(relayUpdates);
           if (nodesChanged) {
             emitOmniapiNodesUpdate(updatedNodes, gwImpiantoId);
           }
         }
 
         // Update LED devices
-        ledNodes.forEach((led: any) => {
+        ledUpdates.forEach((led: any) => {
           const result = updateLedState(led.mac, { online: led.online === true });
           if (result.changed) {
             emitOmniapiLedUpdate(result.led, gwImpiantoId);
