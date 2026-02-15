@@ -810,25 +810,30 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       });
       console.log(`⏱️ [TIMING] Memory state update: ${Date.now() - stateUpdateStart}ms`);
 
-      if (nodeUpdate && changed) {
+      // ALWAYS emit NODE_UPDATED for relay state messages (even if state didn't change).
+      // This is a command acknowledgment — the frontend needs it to clear pendingCommands.
+      // Without this, the spinner persists forever when toggling to the same state.
+      if (nodeUpdate) {
         const wsEmitStart = Date.now();
         const nodeImpiantoId = await getImpiantoIdForMac(mac);
-        console.log(`📡 [DEBUG] Emitting node update (CHANGED):`, JSON.stringify(nodeUpdate));
+        console.log(`📡 [DEBUG] Emitting node update (changed=${changed}):`, JSON.stringify(nodeUpdate));
         emitOmniapiNodeUpdate(nodeUpdate, nodeImpiantoId);
         console.log(`⏱️ [TIMING] WebSocket emit: ${Date.now() - wsEmitStart}ms (impianto=${nodeImpiantoId})`);
 
-        // Sync stato al database
-        const dbSyncStart = Date.now();
-        await syncNodeStateToDatabase(mac, {
-          relay1,
-          relay2,
-          rssi: data.rssi,
-          online: data.online ?? true
-        });
-        console.log(`⏱️ [TIMING] DB sync: ${Date.now() - dbSyncStart}ms`);
+        if (changed) {
+          // Sync stato al database only when actually changed
+          const dbSyncStart = Date.now();
+          await syncNodeStateToDatabase(mac, {
+            relay1,
+            relay2,
+            rssi: data.rssi,
+            online: data.online ?? true
+          });
+          console.log(`⏱️ [TIMING] DB sync: ${Date.now() - dbSyncStart}ms`);
+        }
         console.log(`⏱️ [TIMING] Node state TOTAL processing: ${Date.now() - messageStart}ms`);
       } else {
-        console.log(`⚠️ [DEBUG] Node update returned null for MAC=${mac}`);
+        console.log(`⚠️ [DEBUG] Node update returned null for MAC=${mac} (node not in memory)`);
       }
       return;
     }
