@@ -6,7 +6,9 @@ import { connectMQTT } from './config/mqtt';
 import { initializeSocket } from './socket';
 import { loadAllSchedules } from './services/sceneScheduler';
 import { checkConditionalScenes } from './services/conditionsEngine';
-import { startNodeHealthCheck } from './services/nodeHealthCheck';
+// nodeHealthCheck REMOVED — was marking nodes offline after 5s, but gateway
+// heartbeat is every 30s causing constant flicker. Reconciliation in mqtt.ts
+// already handles nodes missing from gateway status correctly.
 import { runOmniapiMigration } from './utils/migrate-omniapi';
 import { initSessionsTable, cleanupExpiredSessions } from './controllers/sessionsController';
 import logger from './config/logger';
@@ -48,9 +50,6 @@ const startServer = async () => {
     setInterval(() => {
       checkConditionalScenes();
     }, 60000); // Ogni 60 secondi
-
-    // Avvia node health check (rileva nodi offline)
-    startNodeHealthCheck();
 
     // Verifica configurazione SMTP (non blocca l'avvio)
     verifyEmailConfig();

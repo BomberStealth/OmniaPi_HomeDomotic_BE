@@ -712,9 +712,9 @@ export const controlRegisteredNode = async (req: AuthRequest, res: Response) => 
     // Register pending command with 5s timeout
     const impiantoId = dispositivo.impianto_id;
     addPendingCommand(mac, channel, action, impiantoId, (_key, cmd) => {
-      // Timeout: mark node as offline in memory so next heartbeat detects change
-      updateNodeState(cmd.mac, { online: false });
-      // Emit COMMAND_TIMEOUT to frontend
+      // Timeout: command not confirmed, but node may still be online
+      // (don't mark offline — gateway heartbeat is the source of truth for online status)
+      // Emit COMMAND_TIMEOUT to frontend so it can rollback the optimistic update
       emitCommandTimeout(impiantoId, { mac: cmd.mac, channel: cmd.channel });
     });
 
