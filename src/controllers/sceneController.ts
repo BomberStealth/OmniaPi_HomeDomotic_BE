@@ -297,6 +297,11 @@ export const executeScena = async (req: AuthRequest, res: Response) => {
 
         // Gestisci dispositivi OmniaPi (ESP-NOW)
         if (device?.device_type === 'omniapi_node' && device?.mac_address) {
+          // Skip offline nodes — don't send commands to unreachable devices
+          if (device.stato === 'offline') {
+            console.log(`⏭️ Scene OmniaPi: ${device.mac_address} SKIPPED (offline)`);
+            continue;
+          }
           const action = newPowerState ? 'on' : 'off';
           omniapiCommand(device.mac_address, 1, action);
           console.log(`📡 Scene OmniaPi: ${device.mac_address} ch1 ${action}`);
