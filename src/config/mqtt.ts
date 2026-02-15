@@ -382,7 +382,12 @@ const reconcileGatewayNodes = async (gatewayMac: string, gatewayNodes: string[])
     for (const mac of dbMacs) {
       if (!gwMacs.has(mac)) {
         console.log(`[RECONCILE] Node ${mac} in DB but not on gateway - marking offline`);
-        updateNodeState(mac, { online: false });
+        const { node: offlineNode } = updateNodeState(mac, { online: false });
+        // Emit WebSocket so frontend updates in real-time
+        if (offlineNode) {
+          emitOmniapiNodeUpdate(offlineNode, impiantoId);
+          console.log(`[RECONCILE] Emitted NODE_UPDATED (offline) for ${mac}`);
+        }
         await query(
           `UPDATE dispositivi SET stato = 'offline' WHERE mac_address = ? AND device_type IN ('omniapi_node', 'omniapi_led')`,
           [mac]
@@ -579,6 +584,14 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
             if (wasOnline && !isNowOnline) {
               // Was online, now offline (or missing from list)
               console.log(`[NODE-STATUS] Node ${mac} went OFFLINE`);
+              // Mark as offline in tracking map so we don't re-fire on every heartbeat
+              previousNodeOnlineState.set(mac, false);
+              // Update in-memory state + emit WebSocket so frontend updates in real-time
+              const { node: offlineNode } = updateNodeState(mac, { online: false });
+              if (offlineNode) {
+                emitOmniapiNodeUpdate(offlineNode, gwImpiantoId);
+                console.log(`[NODE-STATUS] Emitted NODE_UPDATED (offline) for ${mac}`);
+              }
               // Update DB stato
               query(
                 `UPDATE dispositivi SET stato = 'offline' WHERE UPPER(mac_address) = ? AND impianto_id = ?`,
