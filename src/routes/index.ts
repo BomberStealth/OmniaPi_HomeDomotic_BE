@@ -1,4 +1,5 @@
 import { Router, raw } from 'express';
+import os from 'os';
 import * as authController from '../controllers/authController';
 import * as impiantiController from '../controllers/impiantiController';
 import * as dispositiviController from '../controllers/dispositiviController';
@@ -38,6 +39,22 @@ const router = Router();
 // ============================================
 router.get('/version', (req, res) => {
   res.json({ version: 'v1.8.4' });
+});
+
+// MQTT broker info (pubblico - usato dal wizard BLE provisioning)
+router.get('/system/mqtt-broker', (req, res) => {
+  const interfaces = os.networkInterfaces();
+  let localIp = '127.0.0.1';
+  for (const addrs of Object.values(interfaces)) {
+    for (const addr of addrs || []) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        localIp = addr.address;
+        break;
+      }
+    }
+    if (localIp !== '127.0.0.1') break;
+  }
+  res.json({ uri: `mqtt://${localIp}:1883` });
 });
 
 // ============================================
