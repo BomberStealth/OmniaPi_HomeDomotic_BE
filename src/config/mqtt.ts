@@ -408,6 +408,78 @@ const reconcileGatewayNodes = async (gatewayMac: string, gatewayNodes: string[])
 };
 
 // ============================================
+// GATEWAY SELF-HEALING
+// ============================================
+
+/**
+ * Verifica che il gateway sia correttamente associato a un impianto esistente.
+ * Da chiamare ad ogni heartbeat PRIMA della reconciliation dei nodi.
+ *
+ * Ritorna:
+ *   true  → CASO A: associazione valida, procedi normalmente
+ *   false → CASO B/C: factory-reset inviato (gateway si resetterà)
+ *           CASO D: MAC sconosciuto, ignora silenziosamente
+ */
+const checkGatewayAssociation = async (mac: string): Promise<boolean> => {
+  try {
+    const rows = await query(
+      `SELECT g.impianto_id, i.id AS impianto_exists
+       FROM gateways g
+       LEFT JOIN impianti i ON g.impianto_id = i.id
+       WHERE g.mac_address = ?
+       LIMIT 1`,
+      [mac]
+    ) as any[];
+
+    // CASO D: gateway non registrato nel DB
+    if (!rows || rows.length === 0) {
+      console.debug(`[GW-SELFHEAL] Heartbeat da gateway sconosciuto ${mac} — ignorato`);
+      return false;
+    }
+
+    const { impianto_id, impianto_exists } = rows[0];
+
+    // CASO A: gateway associato a impianto esistente → tutto ok
+    if (impianto_id !== null && impianto_exists !== null) {
+      return true;
+    }
+
+    const client = getMQTTClient();
+
+    // CASO B: gateway disassociato (impianto_id = NULL)
+    if (impianto_id === null) {
+      console.info(`[GW-SELFHEAL] Gateway ${mac} è disassociato — invio factory-reset`);
+      client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
+      logOperation(null, 'factory_reset', 'success', {
+        reason: 'disassociated_gateway',
+        gateway_mac: mac,
+      });
+      return false;
+    }
+
+    // CASO C: impianto_id punta a un impianto che non esiste più nel DB
+    console.warn(
+      `[GW-SELFHEAL] Gateway ${mac} punta a impianto ${impianto_id} inesistente — cleanup + factory-reset`
+    );
+    await query(
+      `UPDATE gateways SET impianto_id = NULL, status = 'pending' WHERE mac_address = ?`,
+      [mac]
+    );
+    client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
+    logOperation(null, 'factory_reset', 'success', {
+      reason: 'orphan_impianto',
+      impianto_id,
+      gateway_mac: mac,
+    });
+    return false;
+  } catch (error: any) {
+    // In caso di errore DB non blocchiamo il gateway — meglio falso negativo che gateway muto
+    console.error(`[GW-SELFHEAL] Errore check associazione gateway ${mac}:`, error.message);
+    return true;
+  }
+};
+
+// ============================================
 // OMNIAPI HANDLER
 // ============================================
 
@@ -674,6 +746,16 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
             public_ip: serverPublicIp,
             last_seen: new Date()
           });
+
+          // SELF-HEALING: verifica associazione impianto prima di qualsiasi reconciliation.
+          // Un singolo LEFT JOIN controlla tutti e 4 i casi (A/B/C/D) con 1 sola query.
+          const associationOk = await checkGatewayAssociation(data.mac);
+          if (!associationOk) {
+            // Gateway disassociato, impianto inesistente o MAC sconosciuto:
+            // factory-reset già inviato (casi B/C) o silenziosamente ignorato (caso D).
+            // Non proseguire con reconciliation né con updateGatewayFromMqtt.
+            return;
+          }
 
           // RECONCILIATION: first heartbeat or periodic (every 5 min)
           if (data.nodes && Array.isArray(data.nodes)) {

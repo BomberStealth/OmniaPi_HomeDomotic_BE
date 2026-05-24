@@ -341,6 +341,19 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
       [impiantoId]
     );
 
+    // Invia factory-reset al gateway PRIMA di disassociarlo dal DB.
+    // Se il gateway è online riceve il comando subito e si resetta.
+    // Se è offline, il self-healing al prossimo heartbeat invierà il reset (CASO B).
+    if (gateways && gateways.length > 0) {
+      try {
+        const client = getMQTTClient();
+        client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
+        console.log(`🔄 Factory-reset inviato al gateway ${gateways[0].mac_address} prima della disassociazione`);
+      } catch (mqttErr) {
+        console.warn(`⚠️ MQTT non disponibile per factory-reset gateway ${gateways[0].mac_address} — il self-healing gestirà il reset al prossimo heartbeat`);
+      }
+    }
+
     // Disassocia gateway
     const result: any = await query(
       `UPDATE gateways
