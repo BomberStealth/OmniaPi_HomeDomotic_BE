@@ -311,6 +311,9 @@ router.post('/admin/ota/node/:mac', authMiddleware, roleMiddleware(UserRole.ADMI
 router.get('/admin/ota/status', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.getOtaStatus);
 // Gateway busy status + live info
 router.get('/admin/gateway/status', authMiddleware, otaController.getGatewayFullStatus);
+// Monitoraggio globale gateway (solo admin)
+router.get('/admin/gateways', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.getAllGatewaysAdmin);
+router.get('/admin/gateways/:id/nodes', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.getGatewayNodesAdmin);
 
 // ============================================
 // NOTIFICATIONS ROUTES (Firebase Cloud Messaging)

@@ -438,3 +438,94 @@ export const exitImpiantoAsAdmin = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: 'Errore durante l\'uscita admin' });
   }
 };
+
+// ============================================
+// MONITORAGGIO GLOBALE GATEWAY
+// ============================================
+
+// GET /api/admin/gateways?q=&limit=10
+export const getAllGatewaysAdmin = async (req: AuthRequest, res: Response) => {
+  try {
+    const { q } = req.query;
+    const limit = Math.min(parseInt(req.query.limit as string) || 10, 100);
+
+    let sql = `
+      SELECT
+        g.id,
+        g.mac_address,
+        g.ip_address,
+        g.firmware_version,
+        g.status,
+        g.last_seen,
+        g.mqtt_connected,
+        i.id   AS impianto_id,
+        i.nome AS impianto_nome,
+        COUNT(n.id) AS node_count
+      FROM gateways g
+      LEFT JOIN impianti i ON g.impianto_id = i.id
+      LEFT JOIN omniapi_nodes n ON n.impianto_id = g.impianto_id
+    `;
+    const params: any[] = [];
+
+    if (q && typeof q === 'string' && q.trim().length > 0) {
+      sql += ` WHERE i.nome LIKE ? OR g.mac_address LIKE ?`;
+      params.push(`%${q}%`, `%${q}%`);
+    }
+
+    sql += ` GROUP BY g.id ORDER BY g.last_seen DESC LIMIT ?`;
+    params.push(limit);
+
+    const rows: any = await query(sql, params);
+
+    res.json({
+      gateways: (rows || []).map((r: any) => ({
+        id: r.id,
+        mac: r.mac_address,
+        ip: r.ip_address,
+        version: r.firmware_version,
+        status: r.status,
+        lastSeen: r.last_seen,
+        mqttConnected: !!r.mqtt_connected,
+        impiantoId: r.impianto_id,
+        impiantoNome: r.impianto_nome || null,
+        nodeCount: parseInt(r.node_count) || 0,
+      })),
+      count: rows?.length || 0,
+    });
+  } catch (error) {
+    console.error('Errore getAllGatewaysAdmin:', error);
+    res.status(500).json({ error: 'Errore durante il recupero dei gateway' });
+  }
+};
+
+// GET /api/admin/gateways/:id/nodes
+export const getGatewayNodesAdmin = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const gateways: any = await query(
+      'SELECT impianto_id FROM gateways WHERE id = ?',
+      [id]
+    );
+
+    if (!gateways || gateways.length === 0) {
+      return res.status(404).json({ error: 'Gateway non trovato' });
+    }
+
+    const impiantoId = gateways[0].impianto_id;
+
+    if (!impiantoId) {
+      return res.json({ nodes: [] });
+    }
+
+    const nodes: any = await query(
+      `SELECT id, mac, nome, tipo, stanza_id FROM omniapi_nodes WHERE impianto_id = ? ORDER BY nome ASC`,
+      [impiantoId]
+    );
+
+    res.json({ nodes: nodes || [] });
+  } catch (error) {
+    console.error('Errore getGatewayNodesAdmin:', error);
+    res.status(500).json({ error: 'Errore durante il recupero dei nodi' });
+  }
+};
