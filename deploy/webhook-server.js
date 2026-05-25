@@ -28,7 +28,7 @@ if (fs.existsSync(envPath)) {
 
 const PORT = parseInt(process.env.WEBHOOK_PORT || '9000', 10);
 const SECRET = process.env.WEBHOOK_SECRET;
-const ALLOWED_BRANCHES = (process.env.ALLOWED_BRANCHES || 'main,claude/awaiting-instructions-Hajn2')
+const ALLOWED_BRANCHES = (process.env.ALLOWED_BRANCHES || 'main')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -41,6 +41,7 @@ if (!SECRET) {
 const REPOS = {
   fe: path.join(SCRIPT_DIR, 'deploy-fe.sh'),
   be: path.join(SCRIPT_DIR, 'deploy-be.sh'),
+  configurators: path.join(SCRIPT_DIR, 'deploy-configurators.sh'),
 };
 
 // Stato per repo: running + pending (debounce/coda)
@@ -104,7 +105,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const match = req.url && req.url.match(/^\/webhook\/(fe|be)\/?(\?.*)?$/);
+  const match = req.url && req.url.match(/^\/webhook\/(fe|be|configurators)\/?(?:\?.*)?$/);
   if (req.method !== 'POST' || !match) {
     res.writeHead(404);
     res.end('not found');
