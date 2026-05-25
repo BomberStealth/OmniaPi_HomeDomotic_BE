@@ -460,10 +460,9 @@ export const getAllGatewaysAdmin = async (req: AuthRequest, res: Response) => {
         g.mqtt_connected,
         i.id   AS impianto_id,
         i.nome AS impianto_nome,
-        COUNT(n.id) AS node_count
+        COALESCE(g.node_count, 0) AS node_count
       FROM gateways g
       LEFT JOIN impianti i ON g.impianto_id = i.id
-      LEFT JOIN omniapi_nodes n ON n.impianto_id = g.impianto_id
     `;
     const params: any[] = [];
 
@@ -472,7 +471,7 @@ export const getAllGatewaysAdmin = async (req: AuthRequest, res: Response) => {
       params.push(`%${q}%`, `%${q}%`);
     }
 
-    sql += ` GROUP BY g.id ORDER BY g.last_seen DESC LIMIT ?`;
+    sql += ` ORDER BY g.last_seen DESC LIMIT ?`;
     params.push(limit);
 
     const rows: any = await query(sql, params);
@@ -519,7 +518,10 @@ export const getGatewayNodesAdmin = async (req: AuthRequest, res: Response) => {
     }
 
     const nodes: any = await query(
-      `SELECT id, mac, nome, tipo, stanza_id FROM omniapi_nodes WHERE impianto_id = ? ORDER BY nome ASC`,
+      `SELECT id, mac_address AS mac, nome, tipo, stanza_id
+       FROM dispositivi
+       WHERE impianto_id = ? AND device_type IN ('omniapi_node', 'omniapi_led')
+       ORDER BY nome ASC`,
       [impiantoId]
     );
 
