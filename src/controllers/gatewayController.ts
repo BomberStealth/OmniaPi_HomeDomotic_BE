@@ -860,8 +860,20 @@ export const stopScan = async (req: AuthRequest, res: Response) => {
  */
 export const getScanResults = async (req: AuthRequest, res: Response) => {
   try {
+    // Filter out MACs already registered in any impianto
+    const registered: any = await query(
+      `SELECT mac_address FROM dispositivi WHERE device_type IN ('omniapi_node', 'omniapi_led')`
+    );
+    const registeredMacs = new Set(
+      (registered || []).map((r: any) => (r.mac_address || '').toUpperCase().replace(/-/g, ':'))
+    );
+
     if (scanResults) {
-      res.json({ success: true, nodes: scanResults.nodes, count: scanResults.count });
+      const filteredNodes = scanResults.nodes.filter((n: any) => {
+        const mac = (n.mac || '').toUpperCase().replace(/-/g, ':');
+        return mac && !registeredMacs.has(mac);
+      });
+      res.json({ success: true, nodes: filteredNodes, count: filteredNodes.length });
     } else {
       res.json({ success: true, nodes: [], count: 0 });
     }
