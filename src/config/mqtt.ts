@@ -127,11 +127,22 @@ interface CommissionResult {
   timestamp: number;
 }
 
+interface BatchCommissionResult {
+  ok: string[];
+  failed: string[];
+  timestamp: number;
+}
+
 export let scanResults: ScanResults | null = null;
 export const commissionResults = new Map<string, CommissionResult>();
+export let batchCommissionResult: BatchCommissionResult | null = null;
 
 export const clearScanResults = () => {
   scanResults = null;
+};
+
+export const clearBatchCommissionResult = () => {
+  batchCommissionResult = null;
 };
 
 // ============================================
@@ -263,8 +274,9 @@ export const connectMQTT = () => {
       'omniapi/gateway/nodes/+/state', // Stato singolo nodo (relay feedback)
       'omniapi/gateway/lwt',          // Last Will and Testament (offline)
       // OmniaPi Scan & Commission results
-      'omniapi/gateway/scan/results',       // Scan results from gateway
-      'omniapi/gateway/commission/result',   // Commission result from gateway
+      'omniapi/gateway/scan/results',             // Scan results from gateway
+      'omniapi/gateway/commission/result',         // Commission result (single) from gateway
+      'omniapi/gateway/commission/batch/result',   // Batch commission result from gateway
       // OmniaPi LED Strip topics
       'omniapi/led/state'             // LED Strip state updates
     ];
@@ -531,7 +543,7 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       return;
     }
 
-    // omniapi/gateway/commission/result (Commission result from gateway)
+    // omniapi/gateway/commission/result (Commission result - single node)
     if (topic === 'omniapi/gateway/commission/result') {
       console.log(`📡 Commission result: mac=${data.mac}, success=${data.success}`);
       if (data.mac) {
@@ -542,6 +554,17 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
           timestamp: Date.now()
         });
       }
+      return;
+    }
+
+    // omniapi/gateway/commission/batch/result (Batch commission result)
+    if (topic === 'omniapi/gateway/commission/batch/result') {
+      console.log(`📡 Batch commission result: ok=${(data.ok || []).length}, failed=${(data.failed || []).length}`);
+      batchCommissionResult = {
+        ok: (data.ok || []).map((m: string) => m.toUpperCase().replace(/-/g, ':')),
+        failed: (data.failed || []).map((m: string) => m.toUpperCase().replace(/-/g, ':')),
+        timestamp: Date.now()
+      };
       return;
     }
 
