@@ -435,7 +435,7 @@ const reconcileGatewayNodes = async (gatewayMac: string, gatewayNodes: string[])
  *   false → CASO B/C: factory-reset inviato (gateway si resetterà)
  *           CASO D: MAC sconosciuto, ignora silenziosamente
  */
-const checkGatewayAssociation = async (mac: string): Promise<boolean> => {
+const checkGatewayAssociation = async (mac: string, ip?: string, version?: string): Promise<boolean> => {
   try {
     const rows = await query(
       `SELECT g.impianto_id, i.id AS impianto_exists
@@ -446,10 +446,16 @@ const checkGatewayAssociation = async (mac: string): Promise<boolean> => {
       [mac]
     ) as any[];
 
-    // CASO D: gateway non registrato nel DB
+    // CASO D: gateway non registrato nel DB → lo registriamo come pending (storico)
     if (!rows || rows.length === 0) {
-      console.debug(`[GW-SELFHEAL] Heartbeat da gateway sconosciuto ${mac} — ignorato`);
-      return false;
+      console.log(`[GW-SELFHEAL] Nuovo gateway ${mac} — auto-registrato in DB come pending`);
+      await query(
+        `INSERT INTO gateways (mac_address, ip_address, firmware_version, status, impianto_id, last_seen, mqtt_connected)
+         VALUES (?, ?, ?, 'pending', NULL, NOW(), 1)
+         ON DUPLICATE KEY UPDATE last_seen = NOW(), mqtt_connected = 1`,
+        [mac, ip || null, version || null]
+      );
+      return false; // pending — skip reconciliation come CASO B
     }
 
     const { impianto_id, impianto_exists } = rows[0];
@@ -777,7 +783,7 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
 
           // SELF-HEALING: verifica associazione impianto prima di qualsiasi reconciliation.
           // Un singolo LEFT JOIN controlla tutti e 4 i casi (A/B/C/D) con 1 sola query.
-          const associationOk = await checkGatewayAssociation(data.mac);
+          const associationOk = await checkGatewayAssociation(data.mac, data.ip, data.version);
           if (!associationOk) {
             // Gateway disassociato, impianto inesistente o MAC sconosciuto:
             // factory-reset già inviato (casi B/C) o silenziosamente ignorato (caso D).
