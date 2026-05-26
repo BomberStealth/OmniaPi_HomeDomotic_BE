@@ -408,11 +408,8 @@ export const deleteImpianto = async (req: Request, res: Response) => {
       }
     }
 
-    // 4. Resetta i gateway associati a questo impianto
-    await query(
-      `UPDATE gateways SET impianto_id = NULL, status = 'pending' WHERE impianto_id = ?`,
-      [id]
-    );
+    // 4. Elimina i gateway associati (si re-registreranno come nuovi al prossimo boot)
+    await query(`DELETE FROM gateways WHERE impianto_id = ?`, [id]);
 
     // 5. Pulisci operation_log (nessuna FK, va pulito manualmente)
     await query('DELETE FROM operation_log WHERE impianto_id = ?', [id]);
