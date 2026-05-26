@@ -7,11 +7,22 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import os from 'os';
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { getGatewayState, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
 import { onlineGateways, getMQTTClient } from '../config/mqtt';
 import { logOperation } from '../services/operationLog';
+
+function getLocalLanIp(): string {
+  const ifaces = os.networkInterfaces();
+  for (const addrs of Object.values(ifaces)) {
+    for (const addr of addrs || []) {
+      if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+    }
+  }
+  return '127.0.0.1';
+}
 
 // Firmware storage directory (BE root/firmware/)
 const FIRMWARE_DIR = path.join(__dirname, '../../firmware');
@@ -371,18 +382,16 @@ export const triggerGatewayOtaMqtt = async (req: AuthRequest, res: Response) => 
   const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
   const size = fileBuffer.length;
 
-  // URL da cui il gateway scaricherà il firmware (serve senza auth)
-  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
-  const proto = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
-  const downloadUrl = `${proto}://${host}/firmware/${safeName}`;
+  // URL locale LAN (il gateway è sulla stessa rete del Pi — usa IP locale + porta 3000 diretta)
+  const localIp = getLocalLanIp();
+  const downloadUrl = `http://${localIp}:3000/firmware/${safeName}`;
 
-  // Estrai versione dal nome file (es. omniapi_gateway_mesh_v1.9.2.bin → 1.9.2)
-  const versionMatch = safeName.match(/v(\d+[\.\d]+)/);
+  // Estrai versione dal nome file (es. omniapi_gateway_v1.19.2.bin → 1.19.2)
+  const versionMatch = safeName.match(/v?(\d+\.\d+\.\d+)/);
   const version = versionMatch ? versionMatch[1] : '0.0.0';
 
   // Normalizza MAC → senza separatori, uppercase
   const macNoColon = (mac as string).replace(/[:-]/g, '').toUpperCase();
-  const mqttTopic = `omniapi/gateway/${macNoColon}/ota/start`;
 
   const payload = {
     url: downloadUrl,
@@ -394,7 +403,9 @@ export const triggerGatewayOtaMqtt = async (req: AuthRequest, res: Response) => 
 
   try {
     const client = getMQTTClient();
-    client.publish(mqttTopic, JSON.stringify(payload));
+    // Pubblica su topic per-gateway (firmware >= 1.19.2) E broadcast (firmware <= 1.19.1)
+    client.publish(`omniapi/gateway/${macNoColon}/ota/start`, JSON.stringify(payload));
+    client.publish(`omniapi/gateway/ota/start`, JSON.stringify(payload));
     console.log(`🔧 [OTA-MQTT] Trigger OTA → gateway ${mac}: ${safeName} @ ${downloadUrl}`);
 
     logOperation(null, 'ota_gateway', 'success', { mac, firmware: safeName, version, size, method: 'mqtt' });
