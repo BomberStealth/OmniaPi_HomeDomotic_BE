@@ -6,6 +6,7 @@ import { query } from '../config/database';
 
 export type OperationType =
   | 'commission'
+  | 'commission_batch'
   | 'delete_node'
   | 'ota_gateway'
   | 'ota_node'
