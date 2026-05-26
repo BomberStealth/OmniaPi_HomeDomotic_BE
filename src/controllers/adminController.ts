@@ -462,7 +462,7 @@ export const getAllGatewaysAdmin = async (req: AuthRequest, res: Response) => {
         i.nome AS impianto_nome,
         COALESCE(g.node_count, 0) AS node_count
       FROM gateways g
-      LEFT JOIN impianti i ON g.impianto_id = i.id
+      INNER JOIN impianti i ON g.impianto_id = i.id
     `;
     const params: any[] = [];
 

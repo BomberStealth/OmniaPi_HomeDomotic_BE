@@ -354,11 +354,9 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Disassocia gateway
+    // Elimina il record gateway (si re-registrerà come nuovo al prossimo boot)
     const result: any = await query(
-      `UPDATE gateways
-       SET impianto_id = NULL, status = 'pending'
-       WHERE impianto_id = ?`,
+      `DELETE FROM gateways WHERE impianto_id = ?`,
       [impiantoId]
     );
 
@@ -366,7 +364,7 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Nessun gateway associato a questo impianto' });
     }
 
-    console.log(`🔓 Gateway disassociato dall'impianto ${impiantoId}`);
+    console.log(`🗑️ Gateway eliminato dall'impianto ${impiantoId} (si re-registrerà al boot)`);
 
     // Emit WebSocket per aggiornamento real-time
     if (gateways && gateways.length > 0) {
