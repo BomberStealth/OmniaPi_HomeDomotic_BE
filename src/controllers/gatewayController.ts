@@ -347,7 +347,8 @@ export const disassociateGateway = async (req: AuthRequest, res: Response) => {
     if (gateways && gateways.length > 0) {
       try {
         const client = getMQTTClient();
-        client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
+        const gwMacNoColon = (gateways[0].mac_address || '').replace(/[:-]/g, '').toUpperCase();
+        client.publish(`omniapi/gateway/${gwMacNoColon}/cmd/factory-reset`, JSON.stringify({}));
         console.log(`🔄 Factory-reset inviato al gateway ${gateways[0].mac_address} prima della disassociazione`);
       } catch (mqttErr) {
         console.warn(`⚠️ MQTT non disponibile per factory-reset gateway ${gateways[0].mac_address} — il self-healing gestirà il reset al prossimo heartbeat`);
@@ -819,12 +820,19 @@ export const startScan = async (req: AuthRequest, res: Response) => {
   }
 
   try {
+    const { gateway_mac } = req.body;
+    if (!gateway_mac) {
+      releaseGatewayLock();
+      return res.status(400).json({ error: 'gateway_mac richiesto nel body' });
+    }
+    const normalizedGwMac = (gateway_mac as string).replace(/[:-]/g, '').toUpperCase();
     const client = getMQTTClient();
     clearScanResults();
-    client.publish('omniapi/gateway/scan', JSON.stringify({ action: 'start' }));
-    releaseGatewayLock(); // Fire-and-forget: gateway gestisce la scan autonomamente
-    console.log('🔍 Scan nodi avviato via MQTT');
-    logOperation(null, 'scan', 'success', { action: 'start' });
+    const topic = `omniapi/gateway/${normalizedGwMac}/scan`;
+    client.publish(topic, JSON.stringify({ action: 'start' }));
+    releaseGatewayLock();
+    console.log(`🔍 Scan avviata su gateway ${normalizedGwMac} via MQTT`);
+    logOperation(null, 'scan', 'success', { action: 'start', gateway_mac: normalizedGwMac });
     res.json({ success: true, message: 'Scan avviato' });
   } catch (error: any) {
     releaseGatewayLock();
@@ -940,13 +948,18 @@ export const commissionNodesBatch = async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const { nodes } = req.body;
+    const { nodes, gateway_mac } = req.body;
 
+    if (!gateway_mac) {
+      releaseGatewayLock();
+      return res.status(400).json({ error: 'gateway_mac richiesto nel body' });
+    }
     if (!nodes || !Array.isArray(nodes) || nodes.length === 0) {
       releaseGatewayLock();
       return res.status(400).json({ error: 'Lista nodi richiesta' });
     }
 
+    const normalizedGwMac = (gateway_mac as string).replace(/[:-]/g, '').toUpperCase();
     const normalizedNodes = nodes.map((n: any) => ({
       mac: (n.mac || '').toUpperCase().replace(/-/g, ':'),
       ...(n.name ? { name: n.name } : {})
@@ -955,9 +968,10 @@ export const commissionNodesBatch = async (req: AuthRequest, res: Response) => {
     clearBatchCommissionResult();
 
     const client = getMQTTClient();
-    client.publish('omniapi/gateway/commission/batch', JSON.stringify({ nodes: normalizedNodes }));
-    console.log(`🔧 Batch commissioning avviato per ${normalizedNodes.length} nodi`);
-    logOperation(null, 'commission_batch', 'success', { count: normalizedNodes.length });
+    const topic = `omniapi/gateway/${normalizedGwMac}/commission/batch`;
+    client.publish(topic, JSON.stringify({ nodes: normalizedNodes }));
+    console.log(`🔧 Batch commissioning avviato su gateway ${normalizedGwMac} per ${normalizedNodes.length} nodi`);
+    logOperation(null, 'commission_batch', 'success', { count: normalizedNodes.length, gateway_mac: normalizedGwMac });
 
     releaseGatewayLock();
     res.json({ success: true, message: `Batch commissioning avviato per ${normalizedNodes.length} nodi` });

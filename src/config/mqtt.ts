@@ -273,10 +273,13 @@ export const connectMQTT = () => {
       'omniapi/gateway/nodes',        // Lista nodi
       'omniapi/gateway/nodes/+/state', // Stato singolo nodo (relay feedback)
       'omniapi/gateway/lwt',          // Last Will and Testament (offline)
-      // OmniaPi Scan & Commission results
-      'omniapi/gateway/scan/results',             // Scan results from gateway
-      'omniapi/gateway/commission/result',         // Commission result (single) from gateway
-      'omniapi/gateway/commission/batch/result',   // Batch commission result from gateway
+      // OmniaPi Scan & Commission results (per-gateway + broadcast fallback)
+      'omniapi/gateway/+/scan/results',            // Scan results (per-gateway: omniapi/gateway/{MAC}/scan/results)
+      'omniapi/gateway/+/commission/result',        // Commission result per-gateway
+      'omniapi/gateway/+/commission/batch/result',  // Batch commission result per-gateway
+      'omniapi/gateway/scan/results',              // Broadcast fallback (old firmware)
+      'omniapi/gateway/commission/result',          // Broadcast fallback
+      'omniapi/gateway/commission/batch/result',    // Broadcast fallback
       // OmniaPi LED Strip topics
       'omniapi/led/state'             // LED Strip state updates
     ];
@@ -474,7 +477,8 @@ const checkGatewayAssociation = async (mac: string): Promise<boolean> => {
       `UPDATE gateways SET impianto_id = NULL, status = 'pending' WHERE mac_address = ?`,
       [mac]
     );
-    client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
+    const macNoColon = mac.replace(/[:-]/g, '').toUpperCase();
+    client.publish(`omniapi/gateway/${macNoColon}/cmd/factory-reset`, JSON.stringify({}));
     logOperation(null, 'factory_reset', 'success', {
       reason: 'orphan_impianto',
       impianto_id,
@@ -529,19 +533,21 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       return;
     }
 
-    // omniapi/gateway/scan/results (Scan results from gateway)
-    if (topic === 'omniapi/gateway/scan/results') {
-      console.log(`📡 Scan results received: ${data.count} nodes`);
-      scanResults = {
-        nodes: data.nodes || [],
-        count: data.count || 0,
-        timestamp: Date.now()
-      };
+    // Scan results: per-gateway (omniapi/gateway/{MAC}/scan/results) or broadcast fallback
+    const isScanResults = topic === 'omniapi/gateway/scan/results' ||
+                           /^omniapi\/gateway\/[^/]+\/scan\/results$/.test(topic);
+    if (isScanResults) {
+      const newNodes: ScanNode[] = data.nodes || [];
+      const gwMac = topic.match(/^omniapi\/gateway\/([^/]+)\/scan\/results$/)?.[1] || 'unknown';
+      console.log(`📡 Scan results received: ${newNodes.length} nodes (gateway=${gwMac})`);
+      scanResults = { nodes: newNodes, count: newNodes.length, timestamp: Date.now() };
       return;
     }
 
-    // omniapi/gateway/commission/result (Commission result - single node)
-    if (topic === 'omniapi/gateway/commission/result') {
+    // Commission result: per-gateway or broadcast fallback
+    const isCommissionResult = topic === 'omniapi/gateway/commission/result' ||
+                                /^omniapi\/gateway\/[^/]+\/commission\/result$/.test(topic);
+    if (isCommissionResult) {
       console.log(`📡 Commission result: mac=${data.mac}, success=${data.success}`);
       if (data.mac) {
         const normalizedMac = data.mac.toUpperCase().replace(/-/g, ':');
@@ -554,8 +560,10 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       return;
     }
 
-    // omniapi/gateway/commission/batch/result (Batch commission result)
-    if (topic === 'omniapi/gateway/commission/batch/result') {
+    // Batch commission result: per-gateway or broadcast fallback
+    const isBatchResult = topic === 'omniapi/gateway/commission/batch/result' ||
+                           /^omniapi\/gateway\/[^/]+\/commission\/batch\/result$/.test(topic);
+    if (isBatchResult) {
       console.log(`📡 Batch commission result: ok=${(data.ok || []).length}, failed=${(data.failed || []).length}`);
       batchCommissionResult = {
         ok: (data.ok || []).map((m: string) => m.toUpperCase().replace(/-/g, ':')),
