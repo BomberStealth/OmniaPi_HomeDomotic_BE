@@ -458,14 +458,11 @@ const checkGatewayAssociation = async (mac: string): Promise<boolean> => {
 
     const client = getMQTTClient();
 
-    // CASO B: gateway disassociato (impianto_id = NULL)
+    // CASO B: gateway pending (impianto_id = NULL) — in attesa di associazione nel wizard
+    // NON inviare factory-reset: il gateway è legittimamente in attesa di essere associato.
+    // Disassociation ora cancella il record DB, quindi pending = nuovo gateway mai associato.
     if (impianto_id === null) {
-      console.info(`[GW-SELFHEAL] Gateway ${mac} è disassociato — invio factory-reset`);
-      client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
-      logOperation(null, 'factory_reset', 'success', {
-        reason: 'disassociated_gateway',
-        gateway_mac: mac,
-      });
+      console.debug(`[GW-SELFHEAL] Gateway ${mac} è pending — lasciato in attesa del wizard`);
       return false;
     }
 
