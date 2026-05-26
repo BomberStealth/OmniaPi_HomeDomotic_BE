@@ -38,7 +38,7 @@ const router = Router();
 // VERSION ENDPOINT (per auto-update frontend)
 // ============================================
 router.get('/version', (req, res) => {
-  res.json({ version: 'v1.9.2' });
+  res.json({ version: 'v1.9.3' });
 });
 
 // MQTT broker info (pubblico - usato dal wizard BLE provisioning)
@@ -317,6 +317,11 @@ router.get('/admin/gateway/status', authMiddleware, otaController.getGatewayFull
 // Monitoraggio globale gateway (solo admin)
 router.get('/admin/gateways', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.getAllGatewaysAdmin);
 router.get('/admin/gateways/:id/nodes', authMiddleware, roleMiddleware(UserRole.ADMIN), adminController.getGatewayNodesAdmin);
+// Firmware storage (upload/list/delete + MQTT OTA trigger)
+router.post('/admin/firmware', authMiddleware, roleMiddleware(UserRole.ADMIN), raw({ type: 'application/octet-stream', limit: '10mb' }), otaController.uploadFirmwareFile);
+router.get('/admin/firmware', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.listFirmwareFiles);
+router.delete('/admin/firmware/:filename', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.deleteFirmwareFile);
+router.post('/admin/gateways/:mac/ota', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.triggerGatewayOtaMqtt);
 
 // ============================================
 // NOTIFICATIONS ROUTES (Firebase Cloud Messaging)

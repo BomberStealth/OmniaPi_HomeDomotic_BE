@@ -384,11 +384,17 @@ export const deleteImpianto = async (req: Request, res: Response) => {
       [id]
     ) as any[];
 
+    // 2. Recupera il gateway associato (per factory-reset mirato)
+    const gatewaysToReset = await query(
+      `SELECT mac_address FROM gateways WHERE impianto_id = ?`,
+      [id]
+    ) as any[];
+
     const nodeCount = dispositivi?.length ?? 0;
     if (nodeCount > 0) {
       console.log(`[DELETE-IMPIANTO] Decommissioning ${nodeCount} nodes before deleting impianto ${id}`);
 
-      // 2. Per ogni nodo: pubblica delete-node + rimuovi da memoria
+      // 3. Per ogni nodo: pubblica delete-node + rimuovi da memoria
       for (const d of dispositivi) {
         if (d.mac_address) {
           omniapiDeleteNode(d.mac_address);
@@ -397,24 +403,26 @@ export const deleteImpianto = async (req: Request, res: Response) => {
         }
       }
 
-      // 3. Pubblica factory-reset al gateway
-      try {
-        const client = getMQTTClient();
-        client.publish('omniapi/gateway/cmd/factory-reset', JSON.stringify({}));
-        console.log(`[DELETE-IMPIANTO] Factory-reset command sent to gateway`);
-      } catch (mqttErr) {
-        // Gateway offline — procedi comunque, la riconciliazione pulirà al prossimo avvio
-        console.log(`[DELETE-IMPIANTO] Gateway offline, skipping MQTT factory-reset`);
+      // 4. Pubblica factory-reset al gateway specifico (non broadcast)
+      for (const gw of gatewaysToReset) {
+        try {
+          const client = getMQTTClient();
+          const macNoColon = (gw.mac_address || '').replace(/[:-]/g, '').toUpperCase();
+          client.publish(`omniapi/gateway/${macNoColon}/cmd/factory-reset`, JSON.stringify({}));
+          console.log(`[DELETE-IMPIANTO] Factory-reset inviato al gateway ${gw.mac_address}`);
+        } catch (mqttErr) {
+          console.log(`[DELETE-IMPIANTO] Gateway ${gw.mac_address} offline, skipping MQTT factory-reset`);
+        }
       }
     }
 
-    // 4. Elimina i gateway associati (si re-registreranno come nuovi al prossimo boot)
-    await query(`DELETE FROM gateways WHERE impianto_id = ?`, [id]);
+    // 5. Scollega i gateway dall'impianto (il record rimane come storico)
+    await query(`UPDATE gateways SET impianto_id = NULL, status = 'pending' WHERE impianto_id = ?`, [id]);
 
-    // 5. Pulisci operation_log (nessuna FK, va pulito manualmente)
+    // 6. Pulisci operation_log (nessuna FK, va pulito manualmente)
     await query('DELETE FROM operation_log WHERE impianto_id = ?', [id]);
 
-    // 6. Elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle:
+    // 7. Elimina l'impianto (le FK ON DELETE CASCADE gestiranno le altre tabelle:
     //    scene, piani, stanze, dispositivi, condivisioni_impianto, provision_tokens,
     //    energy_tariffs, geofence_zones, tracked_devices, notifications_history, impianti_condivisi)
     await query('DELETE FROM impianti WHERE id = ?', [id]);

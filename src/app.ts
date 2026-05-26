@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import path from 'path';
+import fs from 'fs';
 // RATE LIMITING DISABILITATO - causava blocchi ingiustificati
 // import rateLimit from 'express-rate-limit';
 import routes from './routes';
@@ -76,6 +78,11 @@ app.get('/health', (req, res) => {
     version: process.env.npm_package_version || '1.0.0'
   });
 });
+
+// Serve firmware files (no auth — gateway must download without credentials)
+const firmwareDir = path.join(__dirname, '../firmware');
+if (!fs.existsSync(firmwareDir)) fs.mkdirSync(firmwareDir, { recursive: true });
+app.use('/firmware', express.static(firmwareDir, { dotfiles: 'deny' }));
 
 // API routes
 app.use('/api', routes);

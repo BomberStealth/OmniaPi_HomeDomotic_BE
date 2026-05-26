@@ -4,11 +4,20 @@
  * All endpoints require admin role.
  */
 
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { getGatewayState, acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
 import { onlineGateways, getMQTTClient } from '../config/mqtt';
 import { logOperation } from '../services/operationLog';
+
+// Firmware storage directory (BE root/firmware/)
+const FIRMWARE_DIR = path.join(__dirname, '../../firmware');
+if (!fs.existsSync(FIRMWARE_DIR)) {
+  fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
+}
 
 // ============================================
 // HELPER: Resolve gateway IP
@@ -275,6 +284,125 @@ export const getOtaStatus = async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     console.error('🔧 [OTA] Status error:', error.message);
     res.status(500).json({ success: false, error: 'Errore lettura stato OTA' });
+  }
+};
+
+// ============================================
+// POST /api/admin/firmware?name=filename.bin
+// Upload e salva firmware sul server BE
+// ============================================
+
+export const uploadFirmwareFile = async (req: AuthRequest, res: Response) => {
+  const rawName = (req.query.name as string) || '';
+  const safeName = path.basename(rawName).replace(/[^a-zA-Z0-9._-]/g, '_');
+
+  if (!safeName || !safeName.endsWith('.bin')) {
+    return res.status(400).json({ error: 'Nome file .bin richiesto come query param ?name=' });
+  }
+
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    return res.status(400).json({ error: 'Nessun file firmware ricevuto' });
+  }
+
+  const filePath = path.join(FIRMWARE_DIR, safeName);
+  fs.writeFileSync(filePath, req.body);
+
+  const sha256 = crypto.createHash('sha256').update(req.body).digest('hex');
+  console.log(`📦 [FIRMWARE] Salvato: ${safeName} (${req.body.length} bytes, sha256=${sha256.slice(0, 16)}...)`);
+
+  res.json({ success: true, filename: safeName, size: req.body.length, sha256 });
+};
+
+// ============================================
+// GET /api/admin/firmware
+// Lista firmware disponibili sul server
+// ============================================
+
+export const listFirmwareFiles = async (req: AuthRequest, res: Response) => {
+  const files = fs.readdirSync(FIRMWARE_DIR)
+    .filter(f => f.endsWith('.bin'))
+    .map(f => {
+      const stat = fs.statSync(path.join(FIRMWARE_DIR, f));
+      return { filename: f, size: stat.size, uploadedAt: stat.mtime.toISOString() };
+    })
+    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
+
+  res.json({ files });
+};
+
+// ============================================
+// DELETE /api/admin/firmware/:filename
+// Elimina firmware dal server
+// ============================================
+
+export const deleteFirmwareFile = async (req: AuthRequest, res: Response) => {
+  const safeName = path.basename(req.params.filename || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const filePath = path.join(FIRMWARE_DIR, safeName);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Firmware non trovato' });
+  }
+
+  fs.unlinkSync(filePath);
+  res.json({ success: true });
+};
+
+// ============================================
+// POST /api/admin/gateways/:mac/ota
+// Trigger OTA via MQTT per gateway specifico
+// ============================================
+
+export const triggerGatewayOtaMqtt = async (req: AuthRequest, res: Response) => {
+  const { mac } = req.params;
+  const { filename } = req.body;
+
+  if (!filename) {
+    return res.status(400).json({ error: 'filename richiesto nel body' });
+  }
+
+  const safeName = path.basename(filename as string).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const filePath = path.join(FIRMWARE_DIR, safeName);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Firmware non trovato sul server' });
+  }
+
+  const fileBuffer = fs.readFileSync(filePath);
+  const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+  const size = fileBuffer.length;
+
+  // URL da cui il gateway scaricherà il firmware (serve senza auth)
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  const proto = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+  const downloadUrl = `${proto}://${host}/firmware/${safeName}`;
+
+  // Estrai versione dal nome file (es. omniapi_gateway_mesh_v1.9.2.bin → 1.9.2)
+  const versionMatch = safeName.match(/v(\d+[\.\d]+)/);
+  const version = versionMatch ? versionMatch[1] : '0.0.0';
+
+  // Normalizza MAC → senza separatori, uppercase
+  const macNoColon = (mac as string).replace(/[:-]/g, '').toUpperCase();
+  const mqttTopic = `omniapi/gateway/${macNoColon}/ota/start`;
+
+  const payload = {
+    url: downloadUrl,
+    version,
+    sha256,
+    size,
+    device_type: 0xFF, // DEVICE_TYPE_GATEWAY
+  };
+
+  try {
+    const client = getMQTTClient();
+    client.publish(mqttTopic, JSON.stringify(payload));
+    console.log(`🔧 [OTA-MQTT] Trigger OTA → gateway ${mac}: ${safeName} @ ${downloadUrl}`);
+
+    logOperation(null, 'ota_gateway', 'success', { mac, firmware: safeName, version, size, method: 'mqtt' });
+
+    res.json({ success: true, gateway_mac: mac, firmware: safeName, version, size, url: downloadUrl });
+  } catch (err: any) {
+    console.error('🔧 [OTA-MQTT] MQTT error:', err.message);
+    res.status(500).json({ error: 'MQTT non disponibile: ' + err.message });
   }
 };
 
