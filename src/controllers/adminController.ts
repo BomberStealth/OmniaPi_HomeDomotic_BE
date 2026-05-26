@@ -462,12 +462,12 @@ export const getAllGatewaysAdmin = async (req: AuthRequest, res: Response) => {
         i.nome AS impianto_nome,
         COALESCE(g.node_count, 0) AS node_count
       FROM gateways g
-      INNER JOIN impianti i ON g.impianto_id = i.id
+      LEFT JOIN impianti i ON g.impianto_id = i.id
     `;
     const params: any[] = [];
 
     if (q && typeof q === 'string' && q.trim().length > 0) {
-      sql += ` WHERE i.nome LIKE ? OR g.mac_address LIKE ?`;
+      sql += ` WHERE (i.nome LIKE ? OR g.mac_address LIKE ?)`;
       params.push(`%${q}%`, `%${q}%`);
     }
 
