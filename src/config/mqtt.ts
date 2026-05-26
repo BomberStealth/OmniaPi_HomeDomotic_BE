@@ -468,10 +468,17 @@ const checkGatewayAssociation = async (mac: string, ip?: string, version?: strin
     const client = getMQTTClient();
 
     // CASO B: gateway pending (impianto_id = NULL) — in attesa di associazione nel wizard
-    // NON inviare factory-reset: il gateway è legittimamente in attesa di essere associato.
-    // Disassociation ora cancella il record DB, quindi pending = nuovo gateway mai associato.
+    // Aggiorna comunque ip/version/mqtt_connected/last_seen così il monitoraggio è accurato.
     if (impianto_id === null) {
-      console.debug(`[GW-SELFHEAL] Gateway ${mac} è pending — lasciato in attesa del wizard`);
+      console.debug(`[GW-SELFHEAL] Gateway ${mac} è pending — aggiorno live info`);
+      await query(
+        `UPDATE gateways
+         SET ip_address = COALESCE(?, ip_address),
+             firmware_version = COALESCE(?, firmware_version),
+             mqtt_connected = 1, last_seen = NOW()
+         WHERE mac_address = ?`,
+        [ip || null, version || null, mac]
+      );
       return false;
     }
 
