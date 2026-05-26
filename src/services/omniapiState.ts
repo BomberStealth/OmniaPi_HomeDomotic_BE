@@ -274,7 +274,7 @@ export const removeLedDevice = (mac: string): void => {
 // GATEWAY BUSY LOCK
 // ============================================
 
-export type GatewayOperation = 'scan' | 'commission' | 'ota_gateway' | 'ota_node' | 'delete';
+export type GatewayOperation = 'scan' | 'commission' | 'commission_batch' | 'ota_gateway' | 'ota_node' | 'delete';
 
 interface GatewayBusyState {
   busy: boolean;
