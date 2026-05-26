@@ -3,7 +3,7 @@ import { query } from '../config/database';
 import { AuthRequest } from '../middleware/auth';
 import { emitGatewayUpdate } from '../socket';
 import { discoverDevices } from '../services/presenceService';
-import { onlineGateways, scanResults, clearScanResults, commissionResults } from '../config/mqtt';
+import { onlineGateways, scanResults, clearScanResults, commissionResults, batchCommissionResult, clearBatchCommissionResult } from '../config/mqtt';
 import { getMQTTClient } from '../config/mqtt';
 import { acquireGatewayLock, releaseGatewayLock, getGatewayBusyState } from '../services/omniapiState';
 import { logOperation } from '../services/operationLog';
@@ -925,6 +925,70 @@ export const commissionNode = async (req: AuthRequest, res: Response) => {
     console.error('Errore commissionNode:', error);
     logOperation(null, 'commission', 'error', { mac: req.body?.mac, error: error.message });
     res.status(500).json({ error: 'Errore durante il commissioning' });
+  }
+};
+
+/**
+ * POST /api/gateway/commission/batch
+ * Avvia batch commissioning via MQTT (un solo switch mesh per tutti i nodi)
+ * Body: { nodes: [{ mac: "XX:XX:XX:XX:XX:XX", name?: "Nome" }] }
+ */
+export const commissionNodesBatch = async (req: AuthRequest, res: Response) => {
+  if (!acquireGatewayLock('commission_batch')) {
+    const busy = getGatewayBusyState();
+    return res.status(409).json({ error: 'Gateway occupato', operation: busy.operation, started_at: busy.started_at });
+  }
+
+  try {
+    const { nodes } = req.body;
+
+    if (!nodes || !Array.isArray(nodes) || nodes.length === 0) {
+      releaseGatewayLock();
+      return res.status(400).json({ error: 'Lista nodi richiesta' });
+    }
+
+    const normalizedNodes = nodes.map((n: any) => ({
+      mac: (n.mac || '').toUpperCase().replace(/-/g, ':'),
+      ...(n.name ? { name: n.name } : {})
+    }));
+
+    clearBatchCommissionResult();
+
+    const client = getMQTTClient();
+    client.publish('omniapi/gateway/commission/batch', JSON.stringify({ nodes: normalizedNodes }));
+    console.log(`🔧 Batch commissioning avviato per ${normalizedNodes.length} nodi`);
+    logOperation(null, 'commission_batch', 'success', { count: normalizedNodes.length });
+
+    releaseGatewayLock();
+    res.json({ success: true, message: `Batch commissioning avviato per ${normalizedNodes.length} nodi` });
+  } catch (error: any) {
+    releaseGatewayLock();
+    console.error('Errore commissionNodesBatch:', error);
+    logOperation(null, 'commission_batch', 'error', { error: error.message });
+    res.status(500).json({ error: 'Errore durante il batch commissioning' });
+  }
+};
+
+/**
+ * GET /api/gateway/commission/batch/result
+ * Ritorna il risultato dell'ultimo batch commissioning
+ */
+export const getBatchCommissionResult = async (req: AuthRequest, res: Response) => {
+  try {
+    if (batchCommissionResult) {
+      res.json({
+        success: true,
+        ready: true,
+        ok: batchCommissionResult.ok,
+        failed: batchCommissionResult.failed,
+        timestamp: batchCommissionResult.timestamp
+      });
+    } else {
+      res.json({ success: true, ready: false, ok: [], failed: [] });
+    }
+  } catch (error) {
+    console.error('Errore getBatchCommissionResult:', error);
+    res.status(500).json({ error: 'Errore durante il recupero del risultato batch' });
   }
 };
 

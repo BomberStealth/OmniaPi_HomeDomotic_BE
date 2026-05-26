@@ -38,7 +38,7 @@ const router = Router();
 // VERSION ENDPOINT (per auto-update frontend)
 // ============================================
 router.get('/version', (req, res) => {
-  res.json({ version: 'v1.8.7' });
+  res.json({ version: 'v1.9.0' });
 });
 
 // MQTT broker info (pubblico - usato dal wizard BLE provisioning)
@@ -243,6 +243,9 @@ router.get('/gateway/scan/results', authMiddleware, gatewayController.getScanRes
 // Commissioning nodi (via MQTT al gateway)
 router.post('/gateway/commission', authMiddleware, gatewayController.commissionNode);
 router.get('/gateway/commission/result/:mac', authMiddleware, gatewayController.getCommissionResult);
+// Batch commissioning (un solo switch mesh per tutti i nodi)
+router.post('/gateway/commission/batch', authMiddleware, gatewayController.commissionNodesBatch);
+router.get('/gateway/commission/batch/result', authMiddleware, gatewayController.getBatchCommissionResult);
 // Scan rete locale per trovare gateway OmniaPi
 router.get('/gateway/scan', authMiddleware, gatewayController.scanGateways);
 // Discover gateway sulla stessa rete (match IP pubblico)
