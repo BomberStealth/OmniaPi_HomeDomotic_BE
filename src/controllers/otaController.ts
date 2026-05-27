@@ -403,9 +403,7 @@ export const triggerGatewayOtaMqtt = async (req: AuthRequest, res: Response) => 
 
   try {
     const client = getMQTTClient();
-    // Pubblica su topic per-gateway (firmware >= 1.19.2) E broadcast (firmware <= 1.19.1)
     client.publish(`omniapi/gateway/${macNoColon}/ota/start`, JSON.stringify(payload));
-    client.publish(`omniapi/gateway/ota/start`, JSON.stringify(payload));
     console.log(`🔧 [OTA-MQTT] Trigger OTA → gateway ${mac}: ${safeName} @ ${downloadUrl}`);
 
     logOperation(null, 'ota_gateway', 'success', { mac, firmware: safeName, version, size, method: 'mqtt' });
