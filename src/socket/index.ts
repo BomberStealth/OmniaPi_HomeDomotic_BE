@@ -218,6 +218,14 @@ export const emitCommandTimeout = (impiantoId: number | null, data: { mac: strin
   }
 };
 
+export const emitNodeDiscovered = (nodeInfo: any, impiantoId?: number | null) => {
+  if (impiantoId) {
+    socketManager.emitToImpianto(impiantoId, WS_EVENTS.NODE_DISCOVERED, nodeInfo);
+  } else {
+    socketManager.broadcast(WS_EVENTS.NODE_DISCOVERED, nodeInfo);
+  }
+};
+
 export const emitOmniapiLedUpdate = (ledState: LedDevice | any, impiantoId?: number | null) => {
   if (impiantoId) {
     socketManager.emitToImpianto(impiantoId, WS_EVENTS.LED_UPDATED, ledState);
