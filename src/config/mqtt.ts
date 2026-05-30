@@ -19,6 +19,7 @@ import {
   emitOmniapiNodeUpdate,
   emitOmniapiNodesUpdate,
   emitOmniapiLedUpdate,
+  emitNodeDiscovered,
   getImpiantoIdForMac
 } from '../socket';
 import {
@@ -281,7 +282,8 @@ export const connectMQTT = () => {
       'omniapi/gateway/commission/result',          // Broadcast fallback
       'omniapi/gateway/commission/batch/result',    // Broadcast fallback
       // OmniaPi LED Strip topics
-      'omniapi/led/state'             // LED Strip state updates
+      'omniapi/led/state',            // LED Strip state updates
+      'omniapi/gateway/+/event/node-discovered'  // Real-time node discovery (button press)
     ];
     mqttClient?.subscribe(topics, (err) => {
       if (err) console.error('❌ Errore subscribe MQTT:', err);
@@ -971,6 +973,21 @@ const handleOmniapiMessage = async (topic: string, message: Buffer) => {
       } else {
         console.log(`⚠️ [DEBUG] Node update returned null for MAC=${mac} (node not in memory)`);
       }
+      return;
+    }
+
+    // Real-time node discovery: omniapi/gateway/{MAC}/event/node-discovered
+    const nodeDiscoveredMatch = topic.match(/^omniapi\/gateway\/([^/]+)\/event\/node-discovered$/);
+    if (nodeDiscoveredMatch) {
+      const gwMacRaw = nodeDiscoveredMatch[1]; // e.g. "5C013BF2CCD0"
+      const gwMac = gwMacRaw.match(/.{2}/g)?.join(':').toUpperCase() || gwMacRaw;
+      const gwRows = await query(
+        'SELECT impianto_id FROM gateways WHERE mac_address = ? AND impianto_id IS NOT NULL LIMIT 1',
+        [gwMac]
+      ) as any[];
+      const impiantoId = gwRows?.[0]?.impianto_id || null;
+      console.log(`[NODE-DISCOVERED] mac=${data.mac} gwMac=${gwMac} impianto=${impiantoId}`);
+      emitNodeDiscovered(data, impiantoId);
       return;
     }
 
