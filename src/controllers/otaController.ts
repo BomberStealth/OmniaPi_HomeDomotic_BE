@@ -30,6 +30,32 @@ if (!fs.existsSync(FIRMWARE_DIR)) {
   fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
 }
 
+// Catalog: maps filename → { device_type }
+const CATALOG_FILE = path.join(FIRMWARE_DIR, 'catalog.json');
+
+function readCatalog(): Record<string, { device_type: string }> {
+  try {
+    if (fs.existsSync(CATALOG_FILE)) return JSON.parse(fs.readFileSync(CATALOG_FILE, 'utf8'));
+  } catch { /* ignore */ }
+  return {};
+}
+
+function writeCatalog(catalog: Record<string, { device_type: string }>) {
+  fs.writeFileSync(CATALOG_FILE, JSON.stringify(catalog, null, 2));
+}
+
+function setDeviceType(filename: string, device_type: string) {
+  const cat = readCatalog();
+  cat[filename] = { device_type };
+  writeCatalog(cat);
+}
+
+function removeFromCatalog(filename: string) {
+  const cat = readCatalog();
+  delete cat[filename];
+  writeCatalog(cat);
+}
+
 // ============================================
 // HELPER: Resolve gateway IP
 // ============================================
@@ -319,9 +345,14 @@ export const uploadFirmwareFile = async (req: AuthRequest, res: Response) => {
   fs.writeFileSync(filePath, req.body);
 
   const sha256 = crypto.createHash('sha256').update(req.body).digest('hex');
-  console.log(`📦 [FIRMWARE] Salvato: ${safeName} (${req.body.length} bytes, sha256=${sha256.slice(0, 16)}...)`);
 
-  res.json({ success: true, filename: safeName, size: req.body.length, sha256 });
+  const rawDeviceType = (req.query.device_type as string) || 'gateway';
+  const device_type = ['gateway', 'node'].includes(rawDeviceType) ? rawDeviceType : rawDeviceType;
+  setDeviceType(safeName, device_type);
+
+  console.log(`📦 [FIRMWARE] Salvato: ${safeName} (${req.body.length} bytes, type=${device_type}, sha256=${sha256.slice(0, 16)}...)`);
+
+  res.json({ success: true, filename: safeName, size: req.body.length, sha256, device_type });
 };
 
 // ============================================
@@ -330,12 +361,17 @@ export const uploadFirmwareFile = async (req: AuthRequest, res: Response) => {
 // ============================================
 
 export const listFirmwareFiles = async (req: AuthRequest, res: Response) => {
+  const catalog = readCatalog();
+  const filterType = req.query.device_type as string | undefined;
+
   const files = fs.readdirSync(FIRMWARE_DIR)
     .filter(f => f.endsWith('.bin'))
     .map(f => {
       const stat = fs.statSync(path.join(FIRMWARE_DIR, f));
-      return { filename: f, size: stat.size, uploadedAt: stat.mtime.toISOString() };
+      const device_type = catalog[f]?.device_type || 'gateway';
+      return { filename: f, size: stat.size, uploadedAt: stat.mtime.toISOString(), device_type };
     })
+    .filter(f => !filterType || f.device_type === filterType)
     .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
 
   res.json({ files });
@@ -355,6 +391,7 @@ export const deleteFirmwareFile = async (req: AuthRequest, res: Response) => {
   }
 
   fs.unlinkSync(filePath);
+  removeFromCatalog(safeName);
   res.json({ success: true });
 };
 
@@ -412,6 +449,76 @@ export const triggerGatewayOtaMqtt = async (req: AuthRequest, res: Response) => 
   } catch (err: any) {
     console.error('🔧 [OTA-MQTT] MQTT error:', err.message);
     res.status(500).json({ error: 'MQTT non disponibile: ' + err.message });
+  }
+};
+
+// ============================================
+// POST /api/admin/nodes/:mac/ota
+// Trigger node OTA usando firmware già presente sul server
+// Body: { filename }
+// ============================================
+
+export const triggerNodeOtaFromServer = async (req: AuthRequest, res: Response) => {
+  const { filename } = req.body;
+  const mac = ((req.params.mac as string) || '').toUpperCase().replace(/-/g, ':');
+
+  if (!filename) return res.status(400).json({ error: 'filename richiesto nel body' });
+  if (!mac) return res.status(400).json({ error: 'MAC address mancante' });
+
+  const safeName = path.basename(filename as string).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const filePath = path.join(FIRMWARE_DIR, safeName);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Firmware non trovato sul server' });
+  }
+
+  if (!acquireGatewayLock('ota_node')) {
+    const busy = getGatewayBusyState();
+    return res.status(409).json({ error: 'Gateway occupato', operation: busy.operation, started_at: busy.started_at });
+  }
+
+  try {
+    const gatewayIp = getGatewayIp();
+    if (!gatewayIp) {
+      releaseGatewayLock();
+      return res.status(400).json({ error: 'Gateway non raggiungibile — nessun IP disponibile' });
+    }
+
+    const fileBuffer = fs.readFileSync(filePath);
+    const firmwareSize = fileBuffer.length;
+    console.log(`🔧 [OTA] Node ${mac} OTA from server file ${safeName} — ${firmwareSize} bytes`);
+
+    const uploadRes = await fetch(
+      `http://${gatewayIp}/api/node/ota?mac=${encodeURIComponent(mac)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(firmwareSize),
+          'Expect': '',
+        },
+        body: fileBuffer,
+        signal: AbortSignal.timeout(120000),
+      }
+    );
+
+    let data: any;
+    try { data = await uploadRes.json(); } catch { data = { success: uploadRes.ok }; }
+
+    if (!uploadRes.ok && !data?.success) {
+      releaseGatewayLock();
+      return res.status(500).json({ error: data?.message || 'Gateway ha rifiutato il firmware per il nodo' });
+    }
+
+    logOperation(null, 'ota_node', 'success', { mac, firmware: safeName, firmware_size: firmwareSize });
+    releaseGatewayLock();
+
+    res.json({ success: true, message: data?.message || 'Firmware inviato al nodo', firmware_size: firmwareSize, target_mac: mac });
+  } catch (error: any) {
+    releaseGatewayLock();
+    console.error('🔧 [OTA] Node OTA from server error:', error.message);
+    logOperation(null, 'ota_node', 'error', { mac, firmware: filename, error: error.message });
+    res.status(500).json({ error: error.message || 'Errore durante l\'aggiornamento firmware nodo' });
   }
 };
 

@@ -38,7 +38,7 @@ const router = Router();
 // VERSION ENDPOINT (per auto-update frontend)
 // ============================================
 router.get('/version', (req, res) => {
-  res.json({ version: 'v1.9.6' });
+  res.json({ version: 'v1.9.7' });
 });
 
 // MQTT broker info (pubblico - usato dal wizard BLE provisioning)
@@ -322,6 +322,7 @@ router.post('/admin/firmware', authMiddleware, roleMiddleware(UserRole.ADMIN), r
 router.get('/admin/firmware', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.listFirmwareFiles);
 router.delete('/admin/firmware/:filename', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.deleteFirmwareFile);
 router.post('/admin/gateways/:mac/ota', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.triggerGatewayOtaMqtt);
+router.post('/admin/nodes/:mac/ota', authMiddleware, roleMiddleware(UserRole.ADMIN), otaController.triggerNodeOtaFromServer);
 
 // ============================================
 // NOTIFICATIONS ROUTES (Firebase Cloud Messaging)
