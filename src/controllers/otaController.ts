@@ -472,53 +472,38 @@ export const triggerNodeOtaFromServer = async (req: AuthRequest, res: Response) 
     return res.status(404).json({ error: 'Firmware non trovato sul server' });
   }
 
-  if (!acquireGatewayLock('ota_node')) {
-    const busy = getGatewayBusyState();
-    return res.status(409).json({ error: 'Gateway occupato', operation: busy.operation, started_at: busy.started_at });
-  }
-
   try {
-    const gatewayIp = getGatewayIp();
-    if (!gatewayIp) {
-      releaseGatewayLock();
-      return res.status(400).json({ error: 'Gateway non raggiungibile — nessun IP disponibile' });
-    }
-
     const fileBuffer = fs.readFileSync(filePath);
-    const firmwareSize = fileBuffer.length;
-    console.log(`🔧 [OTA] Node ${mac} OTA from server file ${safeName} — ${firmwareSize} bytes`);
+    const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const size = fileBuffer.length;
 
-    const uploadRes = await fetch(
-      `http://${gatewayIp}/api/node/ota?mac=${encodeURIComponent(mac)}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': String(firmwareSize),
-          'Expect': '',
-        },
-        body: fileBuffer,
-        signal: AbortSignal.timeout(120000),
-      }
-    );
+    const localIp = getLocalLanIp();
+    const downloadUrl = `http://${localIp}:3000/firmware/${safeName}`;
 
-    let data: any;
-    try { data = await uploadRes.json(); } catch { data = { success: uploadRes.ok }; }
+    const versionMatch = safeName.match(/v?(\d+\.\d+\.\d+)/);
+    const version = versionMatch ? versionMatch[1] : '0.0.0';
 
-    if (!uploadRes.ok && !data?.success) {
-      releaseGatewayLock();
-      return res.status(500).json({ error: data?.message || 'Gateway ha rifiutato il firmware per il nodo' });
-    }
+    // device_type=0x01 (non-0xFF) → gateway routes OTA to node targets via mesh
+    const payload = {
+      url: downloadUrl,
+      version,
+      sha256,
+      size,
+      device_type: 0x01,
+      targets: [mac],
+    };
 
-    logOperation(null, 'ota_node', 'success', { mac, firmware: safeName, firmware_size: firmwareSize });
-    releaseGatewayLock();
+    const client = getMQTTClient();
+    client.publish('omniapi/gateway/ota/start', JSON.stringify(payload));
+    console.log(`🔧 [OTA-MQTT] Trigger node OTA → ${mac}: ${safeName} @ ${downloadUrl}`);
 
-    res.json({ success: true, message: data?.message || 'Firmware inviato al nodo', firmware_size: firmwareSize, target_mac: mac });
-  } catch (error: any) {
-    releaseGatewayLock();
-    console.error('🔧 [OTA] Node OTA from server error:', error.message);
-    logOperation(null, 'ota_node', 'error', { mac, firmware: filename, error: error.message });
-    res.status(500).json({ error: error.message || 'Errore durante l\'aggiornamento firmware nodo' });
+    logOperation(null, 'ota_node', 'success', { mac, firmware: safeName, version, size, method: 'mqtt' });
+
+    res.json({ success: true, target_mac: mac, firmware: safeName, version, size, url: downloadUrl });
+  } catch (err: any) {
+    console.error('🔧 [OTA-MQTT] Node OTA error:', err.message);
+    logOperation(null, 'ota_node', 'error', { mac, firmware: filename, error: err.message });
+    res.status(500).json({ error: err.message || 'Errore durante l\'aggiornamento firmware nodo' });
   }
 };
 
